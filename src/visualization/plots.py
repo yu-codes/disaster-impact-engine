@@ -453,7 +453,8 @@ class TyphoonVisualizer:
         fig.tight_layout()
 
         safe_name = query_rec.typhoon_id
-        self._save(fig, f"prediction_{safe_name}")
+        cat_label = query_rec.taiwan_track_category
+        self._save(fig, f"prediction_cat{cat_label}_{safe_name}")
 
     # ================================================================
     # 4. 批量生成
@@ -473,8 +474,20 @@ class TyphoonVisualizer:
         self.plot_feature_scatter(features, loader)
         print("✓ 所有分析圖表已生成")
 
-    def generate_all_prediction_plots(self, eval_result: dict, loader: DataLoader):
-        """一鍵生成所有預測結果圖"""
+    def generate_all_prediction_plots(
+        self,
+        eval_result: dict,
+        loader: DataLoader,
+        fixed_example_ids: dict[str, str] | None = None,
+    ):
+        """
+        一鍵生成所有預測結果圖
+
+        Args:
+            eval_result: evaluate() 的結果
+            loader: DataLoader
+            fixed_example_ids: {category: typhoon_id} 固定範例，確保每次跑相同颱風
+        """
         print("\n📊 生成預測結果圖表...")
 
         categories = sorted(set(r.taiwan_track_category for r in loader.records))
@@ -482,28 +495,52 @@ class TyphoonVisualizer:
         self.plot_confusion_matrix(eval_result["confusion_data"], categories)
         self.plot_per_category_accuracy(eval_result["per_category"])
 
-        # 每個分類取一個預測範例
-        shown_cats = set()
-        for result in eval_result["predictions"]:
-            cat = result.true_category
-            if cat in shown_cats:
-                continue
-            shown_cats.add(cat)
+        # 建立預測結果索引
+        pred_by_id = {r.typhoon_id: r for r in eval_result["predictions"]}
 
-            query_rec = loader.get(result.typhoon_id)
-            similar_recs = []
-            for st in result.similar_typhoons[:5]:
-                try:
-                    similar_recs.append(loader.get(st["typhoon_id"]))
-                except KeyError:
-                    pass
+        if fixed_example_ids:
+            # 使用固定範例
+            for cat, tid in sorted(fixed_example_ids.items()):
+                result = pred_by_id.get(tid)
+                if result is None:
+                    continue
+                query_rec = loader.get(result.typhoon_id)
+                similar_recs = []
+                for st in result.similar_typhoons[:5]:
+                    try:
+                        similar_recs.append(loader.get(st["typhoon_id"]))
+                    except KeyError:
+                        pass
+                if similar_recs:
+                    self.plot_prediction_example(
+                        query_rec,
+                        similar_recs,
+                        result.predicted_category,
+                        result.confidence,
+                    )
+        else:
+            # 每個分類取第一個
+            shown_cats = set()
+            for result in eval_result["predictions"]:
+                cat = result.true_category
+                if cat in shown_cats:
+                    continue
+                shown_cats.add(cat)
 
-            if similar_recs:
-                self.plot_prediction_example(
-                    query_rec,
-                    similar_recs,
-                    result.predicted_category,
-                    result.confidence,
-                )
+                query_rec = loader.get(result.typhoon_id)
+                similar_recs = []
+                for st in result.similar_typhoons[:5]:
+                    try:
+                        similar_recs.append(loader.get(st["typhoon_id"]))
+                    except KeyError:
+                        pass
+
+                if similar_recs:
+                    self.plot_prediction_example(
+                        query_rec,
+                        similar_recs,
+                        result.predicted_category,
+                        result.confidence,
+                    )
 
         print("✓ 所有預測結果圖表已生成")

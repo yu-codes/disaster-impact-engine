@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}資料分析 — 颱風類比預測系統{% endblock %}
+{% block content %}
+<h1>📊 資料分析</h1>
+<p style="color:#666;margin-bottom:1rem;">共 {{ images|length }} 張分析圖表（點擊可放大）</p>
+
+{% if images %}
+<div class="grid grid-2">
+    {% for img in images %}
+    <div class="card img-container">
+        <img src="{{ img.url }}" alt="{{ img.name }}" onclick="showModal(this.src)" loading="lazy">
+        <div class="img-caption">{{ img.name }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <p>尚無分析圖表。請先執行 <code>python scripts/run_analysis.py</code></p>
+</div>
+{% endif %}
+{% endblock %}

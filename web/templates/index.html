@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}首頁 — 颱風類比預測系統{% endblock %}
+{% block content %}
+<h1>颱風類比災害預測系統</h1>
+<div class="grid grid-3">
+    <div class="card">
+        <h2>📊 資料分析</h2>
+        <p>探索 207 筆侵臺颱風的路徑分類、強度、生成位置、特徵相關性等分析圖表。</p>
+        <br>
+        <a href="/analysis" class="btn">查看分析</a>
+    </div>
+    <div class="card">
+        <h2>🎯 預測結果</h2>
+        <p>瀏覽各次預測實驗的結果，含不同算法（Baseline、KNN+DTW、規則式）的比較。</p>
+        <br>
+        <a href="/predictions" class="btn">查看結果</a>
+    </div>
+    <div class="card">
+        <h2>🔮 線上預測</h2>
+        <p>輸入自訂颱風路徑 JSON，即時查詢最相似的歷史颱風並產出分析圖表。</p>
+        <br>
+        <a href="/predict" class="btn">開始預測</a>
+    </div>
+</div>
+
+<div class="card" style="margin-top:1rem;">
+    <h2>方法概述</h2>
+    <table>
+        <tr><th>步驟</th><th>說明</th></tr>
+        <tr><td>1. 空間標準化</td><td>以台灣 (23.7°N, 121°E) 為原點，計算極座標 (r, θ)</td></tr>
+        <tr><td>2. 時間對齊</td><td>DTW 比對 500km 影響窗口內的多維序列</td></tr>
+        <tr><td>3. 多維特徵</td><td>11 維特徵向量（距離、方位角、風速、氣壓、移動速度…）</td></tr>
+        <tr><td>4. 混合評分</td><td>Combined = α × 特徵距離 + (1−α) × DTW 距離</td></tr>
+    </table>
+</div>
+{% endblock %}

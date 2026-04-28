@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}線上預測 — 颱風類比預測系統{% endblock %}
+{% block content %}
+<h1>🔮 線上預測</h1>
+<p style="color:#666;margin-bottom:1rem;">輸入颱風路徑 JSON，找出最相似的歷史颱風。</p>
+
+<div class="card">
+    <div class="form-row">
+        <div class="form-group">
+            <label>算法</label>
+            <select id="method">
+                <option value="combined" selected>Combined (KNN+DTW)</option>
+                <option value="knn">KNN</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>k</label>
+            <input type="number" id="k" value="5" min="1" max="20">
+        </div>
+        <div class="form-group">
+            <label>α</label>
+            <input type="number" id="alpha" value="0.5" min="0" max="1" step="0.1">
+        </div>
+    </div>
+    <div class="form-group">
+        <label>颱風路徑 JSON</label>
+        <textarea id="trackInput" rows="14">[
+  {"latitude": 15.0, "longitude": 135.0, "wind_kt": 25, "pressure_mb": 1002},
+  {"latitude": 16.5, "longitude": 132.0, "wind_kt": 35, "pressure_mb": 995},
+  {"latitude": 18.0, "longitude": 129.0, "wind_kt": 50, "pressure_mb": 980},
+  {"latitude": 19.5, "longitude": 126.5, "wind_kt": 65, "pressure_mb": 965},
+  {"latitude": 21.0, "longitude": 124.0, "wind_kt": 75, "pressure_mb": 955},
+  {"latitude": 22.5, "longitude": 122.0, "wind_kt": 80, "pressure_mb": 950},
+  {"latitude": 24.0, "longitude": 120.5, "wind_kt": 70, "pressure_mb": 960},
+  {"latitude": 25.5, "longitude": 119.5, "wind_kt": 55, "pressure_mb": 975},
+  {"latitude": 27.0, "longitude": 119.0, "wind_kt": 40, "pressure_mb": 990}
+]</textarea>
+    </div>
+    <button class="btn" id="predictBtn" onclick="submitPredict()">🔍 執行預測</button>
+</div>
+
+<div id="resultArea" style="display:none;">
+    <div class="card result-box" id="resultSummary"></div>
+    <div id="resultImages" class="grid grid-2" style="margin-top:1rem;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function submitPredict() {
+    const btn = document.getElementById('predictBtn');
+    const area = document.getElementById('resultArea');
+    const summary = document.getElementById('resultSummary');
+    const imgDiv = document.getElementById('resultImages');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 計算中...';
+    area.style.display = 'none';
+
+    try {
+        const track = JSON.parse(document.getElementById('trackInput').value);
+        const resp = await fetch('/api/predict', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                track: track,
+                method: document.getElementById('method').value,
+                k: parseInt(document.getElementById('k').value),
+                alpha: parseFloat(document.getElementById('alpha').value),
+            })
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            summary.innerHTML = `<strong style="color:red;">錯誤：</strong>${data.error}`;
+            area.style.display = 'block';
+            return;
+        }
+
+        let html = `<h2>預測結果</h2>`;
+        html += `<p><strong>預測分類：</strong><span class="badge badge-blue">${data.predicted_category}</span>`;
+        html += ` <strong>信心度：</strong>${(data.confidence * 100).toFixed(1)}%</p>`;
+        html += `<h3 style="margin-top:1rem;">相似颱風</h3><table>`;
+        html += `<tr><th>排名</th><th>名稱</th><th>年份</th><th>分類</th><th>距離</th><th>分數</th></tr>`;
+        data.similar_typhoons.forEach((t, i) => {
+            html += `<tr><td>${i+1}</td><td>${t.name_zh} (${t.name_en})</td><td>${t.year}</td>`;
+            html += `<td>${t.category}</td><td>${t.distance.toFixed(2)}</td><td>${t.score.toFixed(2)}</td></tr>`;
+        });
+        html += `</table>`;
+
+        if (data.category_votes && Object.keys(data.category_votes).length > 0) {
+            html += `<h3 style="margin-top:1rem;">分類投票</h3><table><tr><th>分類</th><th>權重</th></tr>`;
+            Object.entries(data.category_votes).sort((a,b) => b[1]-a[1]).forEach(([cat, w]) => {
+                html += `<tr><td>類型 ${cat}</td><td>${(w*100).toFixed(1)}%</td></tr>`;
+            });
+            html += `</table>`;
+        }
+
+        summary.innerHTML = html;
+
+        imgDiv.innerHTML = '';
+        if (data.images && data.images.length > 0) {
+            data.images.forEach(img => {
+                imgDiv.innerHTML += `<div class="card img-container">
+                    <img src="${img.url}" alt="${img.name}" onclick="showModal(this.src)" loading="lazy">
+                    <div class="img-caption">${img.name}</div>
+                </div>`;
+            });
+        }
+
+        area.style.display = 'block';
+
+    } catch (e) {
+        summary.innerHTML = `<strong style="color:red;">錯誤：</strong>${e.message}`;
+        area.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '🔍 執行預測';
+    }
+}
+</script>
+{% endblock %}

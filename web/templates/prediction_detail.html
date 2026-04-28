@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}預測詳情 {{ run_id }} — 颱風類比預測系統{% endblock %}
+{% block content %}
+<h1>🎯 預測詳情：{{ run_id }}</h1>
+
+<div class="card">
+    <h2>執行參數</h2>
+    <table>
+        {% for key, val in meta.items() %}
+        {% if key != 'per_category' %}
+        <tr><td style="width:160px;font-weight:600;">{{ key }}</td><td>{{ val }}</td></tr>
+        {% endif %}
+        {% endfor %}
+    </table>
+</div>
+
+{% if meta.get('per_category') %}
+<div class="card">
+    <h2>各分類準確率</h2>
+    <table>
+        <thead>
+            <tr><th>分類</th><th>準確率</th><th>正確數</th><th>總數</th></tr>
+        </thead>
+        <tbody>
+            {% for cat, info in meta.per_category.items()|sort %}
+            <tr>
+                <td>類型 {{ cat }}</td>
+                <td><strong>{{ "%.1f%%"|format(info.accuracy * 100) }}</strong></td>
+                <td>{{ info.correct }}</td>
+                <td>{{ info.total }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<h2>圖表</h2>
+{% if images %}
+<div class="grid grid-2">
+    {% for img in images %}
+    <div class="card img-container">
+        <img src="{{ img.url }}" alt="{{ img.name }}" onclick="showModal(this.src)" loading="lazy">
+        <div class="img-caption">{{ img.name }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card"><p>此版本無圖表。</p></div>
+{% endif %}
+
+<br>
+<a href="/predictions" class="btn">← 返回列表</a>
+{% endblock %}

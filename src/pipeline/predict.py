@@ -17,6 +17,8 @@ from ..similarity.base import SimilarityBase, SimilarityResult
 from ..similarity.knn import KNNSimilarity
 from ..similarity.dtw import DTWSimilarity
 from ..similarity.combined import CombinedSimilarity
+from ..similarity.baseline import BaselineSimilarity
+from ..similarity.rule_based import RuleBasedSimilarity
 from ..models.analog import AnalogModel
 from ..impact.mapping import ImpactMapper
 
@@ -100,10 +102,17 @@ class DisasterImpactPipeline:
                 feature_weights=self.feature_weights,
                 dtw_weights=self.dtw_weights,
             )
+        elif self.similarity_method == "baseline":
+            self.similarity = BaselineSimilarity(seed=42)
+        elif self.similarity_method == "rule_based":
+            self.similarity = RuleBasedSimilarity()
         else:
             raise ValueError(f"不支援的相似度方法：{self.similarity_method}")
 
-        self.similarity.fit(self.features)
+        if self.similarity_method == "rule_based":
+            self.similarity.fit(self.features, loader=self.loader)
+        else:
+            self.similarity.fit(self.features)
 
         # 5. 建立預測模型
         self.model = AnalogModel(label_dict=self.label_dict)

@@ -1,150 +1,130 @@
 """
 數據加載模組
-職責：讀取颱風 / 災害資料
+職責：讀取 processed JSON，提供統一的資料存取介面
 """
 
-import pandas as pd
+import json
 import numpy as np
+import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class TyphoonRecord:
+    """單一颱風的完整資料"""
+
+    typhoon_id: str
+    year: int
+    name_zh: str
+    name_en: str
+    taiwan_track_category: str
+    birth_lon: Optional[float]
+    birth_lat: Optional[float]
+    max_sustained_wind_ms: Optional[float]
+    min_pressure: Optional[float]
+    max_intensity_class: Optional[str]
+    landfall_location: Optional[str]
+    movement_summary: Optional[str]
+    disaster_summary: Optional[str]
+    track: pd.DataFrame = field(
+        repr=False
+    )  # timestamp_utc, lat, lon, wind_kt, pressure_mb
 
 
 class DataLoader:
     """
-    加載颱風和災害數據
+    加載 processed 資料集
     """
-    
-    def __init__(self, data_dir: str = "data/raw"):
-        """
-        初始化數據加載器
-        
-        Args:
-            data_dir: 原始數據目錄路徑
-        """
-        self.data_dir = Path(data_dir)
-        self.typhoon_data = None
-        self.impact_data = None
-    
-    def load_typhoon_data(self, filepath: Optional[str] = None) -> pd.DataFrame:
-        """
-        加載颱風軌跡數據
-        
-        預期列：
-            - typhoon_id: 颱風編號
-            - date: 時間
-            - lat: 緯度
-            - lon: 經度
-            - max_wind: 最大風速 (km/h)
-            - central_pressure: 中心氣壓 (hPa)
-        
-        Args:
-            filepath: 文件路徑（若不指定，使用預設）
-            
-        Returns:
-            颱風數據 DataFrame
-        """
-        if filepath is None:
-            filepath = self.data_dir / "typhoon.csv"
-        
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f"颱風數據文件不存在: {filepath}")
-        
-        self.typhoon_data = pd.read_csv(filepath)
-        self._validate_typhoon_data()
-        return self.typhoon_data
-    
-    def load_impact_data(self, filepath: Optional[str] = None) -> pd.DataFrame:
-        """
-        加載災害影響數據
-        
-        預期列：
-            - typhoon_id: 颱風編號
-            - impact_type: 災害類型 (flooding/blackout/damage/...)
-            - severity: 嚴重程度 (0-5)
-            - affected_areas: 受影響地區
-            - economic_loss: 經濟損失
-        
-        Args:
-            filepath: 文件路徑（若不指定，使用預設）
-            
-        Returns:
-            災害數據 DataFrame
-        """
-        if filepath is None:
-            filepath = self.data_dir / "impact.csv"
-        
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f"災害數據文件不存在: {filepath}")
-        
-        self.impact_data = pd.read_csv(filepath)
-        self._validate_impact_data()
-        return self.impact_data
-    
-    def _validate_typhoon_data(self):
-        """驗證颱風數據格式"""
-        required_cols = ['typhoon_id', 'date', 'lat', 'lon', 'max_wind']
-        missing = [col for col in required_cols if col not in self.typhoon_data.columns]
-        if missing:
-            raise ValueError(f"缺少必要列: {missing}")
-    
-    def _validate_impact_data(self):
-        """驗證災害數據格式"""
-        required_cols = ['typhoon_id', 'impact_type', 'severity']
-        missing = [col for col in required_cols if col not in self.impact_data.columns]
-        if missing:
-            raise ValueError(f"缺少必要列: {missing}")
-    
-    def get_typhoon_by_id(self, typhoon_id: str) -> pd.DataFrame:
-        """
-        根據颱風ID取得完整軌跡
-        
-        Args:
-            typhoon_id: 颱風編號
-            
-        Returns:
-            該颱風的所有時間步數據
-        """
-        if self.typhoon_data is None:
-            raise ValueError("尚未加載颱風數據")
-        
-        return self.typhoon_data[self.typhoon_data['typhoon_id'] == typhoon_id].copy()
-    
-    def get_impact_by_typhoon(self, typhoon_id: str) -> pd.DataFrame:
-        """
-        取得特定颱風的災害數據
-        
-        Args:
-            typhoon_id: 颱風編號
-            
-        Returns:
-            該颱風的災害記錄
-        """
-        if self.impact_data is None:
-            raise ValueError("尚未加載災害數據")
-        
-        return self.impact_data[self.impact_data['typhoon_id'] == typhoon_id].copy()
-    
-    def get_all_typhoon_ids(self) -> List[str]:
-        """取得所有颱風ID"""
-        if self.typhoon_data is None:
-            raise ValueError("尚未加載颱風數據")
-        
-        return sorted(self.typhoon_data['typhoon_id'].unique().tolist())
-    
-    def save_processed_data(self, data: pd.DataFrame, filename: str, output_dir: str = "data/processed"):
-        """
-        保存處理後的數據
-        
-        Args:
-            data: 要保存的 DataFrame
-            filename: 文件名
-            output_dir: 輸出目錄
-        """
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-        
-        filepath = output_path / filename
-        data.to_csv(filepath, index=False)
-        print(f"✓ 數據已保存: {filepath}")
+
+    def __init__(self, processed_dir: str = "data/processed"):
+        self.processed_dir = Path(processed_dir)
+        self._records: list[TyphoonRecord] = []
+        self._index: dict[str, TyphoonRecord] = {}
+
+    @property
+    def records(self) -> list[TyphoonRecord]:
+        if not self._records:
+            raise ValueError("尚未載入資料，請先呼叫 load()")
+        return self._records
+
+    def load(self) -> "DataLoader":
+        """載入完整資料集"""
+        path = self.processed_dir / "typhoons_with_tracks.json"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"找不到資料集：{path}\n請先執行 python scripts/build_dataset.py"
+            )
+
+        with open(path, "r", encoding="utf-8") as f:
+            dataset = json.load(f)
+
+        self._records = []
+        self._index = {}
+
+        for t in dataset["typhoons"]:
+            track_df = pd.DataFrame(t["track"])
+            if "timestamp_utc" in track_df.columns:
+                track_df["timestamp_utc"] = pd.to_datetime(track_df["timestamp_utc"])
+
+            rec = TyphoonRecord(
+                typhoon_id=t["typhoon_id"],
+                year=t["year"],
+                name_zh=t["name_zh"],
+                name_en=t["name_en"],
+                taiwan_track_category=t["taiwan_track_category"],
+                birth_lon=t["birth_location"]["longitude"],
+                birth_lat=t["birth_location"]["latitude"],
+                max_sustained_wind_ms=t.get("max_sustained_wind_ms"),
+                min_pressure=t.get("min_pressure"),
+                max_intensity_class=t.get("max_intensity_class"),
+                landfall_location=t.get("landfall_location"),
+                movement_summary=t.get("movement_summary"),
+                disaster_summary=t.get("disaster_summary"),
+                track=track_df,
+            )
+            self._records.append(rec)
+            self._index[rec.typhoon_id] = rec
+
+        print(f"✓ 已載入 {len(self._records)} 筆颱風資料")
+        return self
+
+    def get(self, typhoon_id: str) -> TyphoonRecord:
+        """按 ID 取得颱風"""
+        if typhoon_id not in self._index:
+            raise KeyError(f"找不到颱風：{typhoon_id}")
+        return self._index[typhoon_id]
+
+    def get_all_ids(self) -> list[str]:
+        return [r.typhoon_id for r in self.records]
+
+    def get_by_category(self, category: str) -> list[TyphoonRecord]:
+        """按侵臺路徑分類篩選"""
+        return [r for r in self.records if r.taiwan_track_category == category]
+
+    def get_categories(self) -> list[str]:
+        """取得所有路徑分類"""
+        return sorted(set(r.taiwan_track_category for r in self.records))
+
+    def to_overview_dataframe(self) -> pd.DataFrame:
+        """轉換為概覽 DataFrame（不含路徑）"""
+        rows = []
+        for r in self.records:
+            rows.append(
+                {
+                    "typhoon_id": r.typhoon_id,
+                    "year": r.year,
+                    "name_zh": r.name_zh,
+                    "name_en": r.name_en,
+                    "taiwan_track_category": r.taiwan_track_category,
+                    "birth_lon": r.birth_lon,
+                    "birth_lat": r.birth_lat,
+                    "max_sustained_wind_ms": r.max_sustained_wind_ms,
+                    "min_pressure": r.min_pressure,
+                    "max_intensity_class": r.max_intensity_class,
+                    "landfall_location": r.landfall_location,
+                    "track_point_count": len(r.track),
+                }
+            )
+        return pd.DataFrame(rows)

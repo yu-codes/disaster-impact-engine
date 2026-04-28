@@ -1,4 +1,3 @@
-"""預測流程模組初始化"""
-from .predict import DisasterImpactPipeline, PredictionResult
+from .predict import DisasterImpactPipeline
 
-__all__ = ['DisasterImpactPipeline', 'PredictionResult']
+__all__ = ["DisasterImpactPipeline"]

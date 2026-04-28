@@ -1,127 +1,107 @@
 """
-KNN 相似度計算實現
-職責：使用 K-Nearest Neighbors 找相似颱風
+KNN 相似度 — 基於摘要特徵向量的歐式距離
 """
 
 import numpy as np
-from typing import List, Tuple, Optional
-from sklearn.metrics.pairwise import euclidean_distances, cosine_distances
-from .base import SimilarityBase
+from sklearn.preprocessing import StandardScaler
+from .base import SimilarityBase, SimilarityResult
 
 
 class KNNSimilarity(SimilarityBase):
     """
-    KNN 相似度計算
-    
-    使用歐式距離或餘弦相似度找 K 個最近鄰
+    基於摘要特徵的 KNN 相似度
+
+    使用標準化後的歐式距離
     """
-    
-    def __init__(self, metric: str = 'euclidean'):
+
+    def __init__(self, feature_weights: np.ndarray | None = None):
         """
-        初始化 KNN 相似度計算器
-        
         Args:
-            metric: 距離度量 ('euclidean' 或 'cosine')
+            feature_weights: 各特徵的權重（11維），None 時等權
         """
-        if metric not in ['euclidean', 'cosine']:
-            raise ValueError(f"不支援的度量: {metric}")
-        
-        self.metric = metric
-        self.reference_vectors = None
-        self.labels = None
-    
-    def fit(self, reference_vectors: np.ndarray, labels: np.ndarray = None):
-        """
-        儲存參考向量（KNN 不需要訓練）
-        
-        Args:
-            reference_vectors: 參考特徵向量 (N, D)
-            labels: 可選的標籤
-        """
-        if not isinstance(reference_vectors, np.ndarray):
-            reference_vectors = np.array(reference_vectors)
-        
-        if reference_vectors.ndim != 2:
-            raise ValueError(f"期望 2D 陣列，得到 {reference_vectors.ndim}D")
-        
-        self.reference_vectors = reference_vectors
-        self.labels = labels
-    
-    def find_similar(self, query_vector: np.ndarray, k: int = 5) -> Tuple[List[int], List[float]]:
-        """
-        找最相似的 k 個樣本
-        
-        Args:
-            query_vector: 查詢向量 (D,)
-            k: 返回的樣本數
-            
-        Returns:
-            (indices, distances): 索引和距離
-        """
-        if self.reference_vectors is None:
-            raise ValueError("尚未擬合參考向量")
-        
-        if not isinstance(query_vector, np.ndarray):
-            query_vector = np.array(query_vector)
-        
-        query_vector = query_vector.reshape(1, -1)
-        
-        # 計算距離
-        if self.metric == 'euclidean':
-            distances = euclidean_distances(query_vector, self.reference_vectors)[0]
-        else:  # cosine
-            distances = cosine_distances(query_vector, self.reference_vectors)[0]
-        
-        # 取最小的 k 個
-        k = min(k, len(distances))
-        indices = np.argsort(distances)[:k]
-        top_distances = distances[indices]
-        
-        return indices.tolist(), top_distances.tolist()
-    
-    def compute_similarity(self, vector1: np.ndarray, vector2: np.ndarray) -> float:
-        """
-        計算兩個向量的距離
-        
-        Args:
-            vector1: 第一個向量
-            vector2: 第二個向量
-            
-        Returns:
-            距離（0 表示完全相似）
-        """
-        if not isinstance(vector1, np.ndarray):
-            vector1 = np.array(vector1)
-        if not isinstance(vector2, np.ndarray):
-            vector2 = np.array(vector2)
-        
-        if self.metric == 'euclidean':
-            distance = np.linalg.norm(vector1 - vector2)
-        else:  # cosine
-            # 餘弦相似度需要轉換為距離
-            from sklearn.metrics.pairwise import cosine_similarity
-            similarity = cosine_similarity([vector1], [vector2])[0][0]
-            distance = 1 - similarity
-        
-        return float(distance)
-    
-    def find_similar_with_names(self, query_vector: np.ndarray, k: int = 5, 
-                                reference_names: Optional[List[str]] = None) -> List[Tuple[str, float]]:
-        """
-        找相似樣本並返回名稱（如 typhoon_id）
-        
-        Args:
-            query_vector: 查詢向量
-            k: 返回的樣本數
-            reference_names: 參考樣本的名稱列表（如颱風ID）
-            
-        Returns:
-            [(name, distance), ...] 列表
-        """
-        indices, distances = self.find_similar(query_vector, k)
-        
-        if reference_names is None:
-            reference_names = [f"sample_{i}" for i in range(len(self.reference_vectors))]
-        
-        results = [(reference_names[idx], dist) for idx, dist in zip(indices, distances)]
-        return results
+        self.feature_weights = feature_weights
+        self.scaler = StandardScaler()
+        self._ids: list[str] = []
+        self._vectors: np.ndarray | None = None  # (N, D) 標準化後
+        self._features_dict = {}
+
+    def fit(self, feature_dict: dict):
+        self._features_dict = feature_dict
+        self._ids = list(feature_dict.keys())
+
+        raw_vectors = np.array(
+            [feature_dict[tid].to_feature_vector() for tid in self._ids]
+        )
+        self._vectors = self.scaler.fit_transform(raw_vectors)
+
+        if self.feature_weights is not None:
+            w = np.array(self.feature_weights, dtype=np.float64)
+            self._vectors = self._vectors * w
+
+        print(f"✓ KNN 已擬合 {len(self._ids)} 筆颱風（{raw_vectors.shape[1]} 維特徵）")
+
+    def find_similar(
+        self, query_id: str, k: int = 5, exclude_self: bool = True
+    ) -> SimilarityResult:
+        if query_id not in self._features_dict:
+            raise KeyError(f"找不到颱風：{query_id}")
+
+        idx = self._ids.index(query_id)
+        query_vec = self._vectors[idx]
+
+        distances = np.linalg.norm(self._vectors - query_vec, axis=1)
+
+        sorted_indices = np.argsort(distances)
+
+        result_ids = []
+        result_dists = []
+        for i in sorted_indices:
+            if exclude_self and self._ids[i] == query_id:
+                continue
+            result_ids.append(self._ids[i])
+            result_dists.append(float(distances[i]))
+            if len(result_ids) >= k:
+                break
+
+        # 分數：距離越小越相似
+        max_d = max(result_dists) if result_dists else 1.0
+        scores = [1.0 - d / (max_d + 1e-8) for d in result_dists]
+
+        return SimilarityResult(
+            query_id=query_id,
+            similar_ids=result_ids,
+            distances=result_dists,
+            scores=scores,
+        )
+
+    def compute_distance(self, id_a: str, id_b: str) -> float:
+        idx_a = self._ids.index(id_a)
+        idx_b = self._ids.index(id_b)
+        return float(np.linalg.norm(self._vectors[idx_a] - self._vectors[idx_b]))
+
+    def transform_query(self, feature_vector: np.ndarray) -> np.ndarray:
+        """將原始特徵向量轉換為標準化後的向量（用於外部查詢）"""
+        scaled = self.scaler.transform(feature_vector.reshape(1, -1))
+        if self.feature_weights is not None:
+            scaled = scaled * np.array(self.feature_weights)
+        return scaled.flatten()
+
+    def find_similar_by_vector(
+        self, query_vector: np.ndarray, k: int = 5
+    ) -> SimilarityResult:
+        """用原始特徵向量查詢"""
+        scaled = self.transform_query(query_vector)
+        distances = np.linalg.norm(self._vectors - scaled, axis=1)
+        sorted_indices = np.argsort(distances)[:k]
+
+        result_ids = [self._ids[i] for i in sorted_indices]
+        result_dists = [float(distances[i]) for i in sorted_indices]
+        max_d = max(result_dists) if result_dists else 1.0
+        scores = [1.0 - d / (max_d + 1e-8) for d in result_dists]
+
+        return SimilarityResult(
+            query_id="query",
+            similar_ids=result_ids,
+            distances=result_dists,
+            scores=scores,
+        )

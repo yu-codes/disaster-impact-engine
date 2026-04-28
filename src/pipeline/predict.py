@@ -1,227 +1,270 @@
 """
-預測流程模組
-職責：串整完整的預測流程
+完整預測流程
+
+data → features → similarity → model → evaluation → visualization
 """
 
-import pandas as pd
+import json
 import numpy as np
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+import pandas as pd
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Any
 
 from ..data.loader import DataLoader
 from ..features.typhoon import TyphoonFeatureExtractor, TyphoonFeatures
-from ..similarity.base import SimilarityBase
-from ..models.base import ModelBase
+from ..similarity.base import SimilarityBase, SimilarityResult
+from ..similarity.knn import KNNSimilarity
+from ..similarity.dtw import DTWSimilarity
+from ..similarity.combined import CombinedSimilarity
+from ..models.analog import AnalogModel
 from ..impact.mapping import ImpactMapper
 
 
 @dataclass
 class PredictionResult:
-    """預測結果容器"""
+    """單一颱風的預測結果"""
+
     typhoon_id: str
-    query_features: TyphoonFeatures
-    similar_typhoon_ids: List[str]
-    similar_distances: List[float]
-    predictions: Dict[str, Dict[str, Any]]
-    timestamp: Optional[str] = None
-    
-    def to_dict(self) -> Dict:
-        """轉換為字典"""
-        return {
-            'typhoon_id': self.typhoon_id,
-            'features': {
-                'distance_to_taiwan': self.query_features.distance_to_taiwan,
-                'azimuth': self.query_features.azimuth,
-                'max_wind': self.query_features.max_wind,
-                'speed': self.query_features.speed,
-            },
-            'similar_typhoons': self.similar_typhoon_ids,
-            'similar_distances': self.similar_distances,
-            'predictions': self.predictions,
-            'timestamp': self.timestamp
-        }
+    name_zh: str
+    name_en: str
+    true_category: str | None
+    predicted_category: str | None
+    confidence: float
+    is_correct: bool | None
+    similar_typhoons: list[dict]
+    category_votes: dict[str, float]
 
 
 class DisasterImpactPipeline:
     """
-    完整的災害預測流程
-    
-    流程：
-    颱風數據 → 特徵提取 → 相似度計算 → 類比預測 → 結果
+    完整的颱風類比預測流程
     """
-    
-    def __init__(self, 
-                 similarity_model: SimilarityBase,
-                 prediction_model: ModelBase,
-                 feature_extractor: Optional[TyphoonFeatureExtractor] = None,
-                 impact_mapper: Optional[ImpactMapper] = None):
+
+    def __init__(
+        self,
+        similarity_method: str = "combined",
+        alpha: float = 0.5,
+        feature_weights: np.ndarray | None = None,
+        dtw_weights: np.ndarray | None = None,
+        impact_radius_km: float = 500.0,
+    ):
         """
-        初始化預測流程
-        
         Args:
-            similarity_model: 相似度計算模型（如 KNNSimilarity）
-            prediction_model: 預測模型（如 AnalogModel）
-            feature_extractor: 特徵提取器
-            impact_mapper: 災害標籤映射器
+            similarity_method: "knn", "dtw", "combined"
+            alpha: combined 模式下特徵距離的權重
+            feature_weights: KNN 特徵權重
+            dtw_weights: DTW 維度權重
+            impact_radius_km: impact window 半徑
         """
-        self.similarity_model = similarity_model
-        self.prediction_model = prediction_model
-        self.feature_extractor = feature_extractor or TyphoonFeatureExtractor()
-        self.impact_mapper = impact_mapper or ImpactMapper()
-        
-        self.data_loader = None
-        self.reference_typhoons = None
-        self.reference_features = None
-        self.reference_indices = {}
-        self.impact_labels = {}
-    
-    def initialize(self, typhoon_data_path: str, impact_data_path: str):
-        """
-        初始化流程（加載數據）
-        
-        Args:
-            typhoon_data_path: 颱風軌跡數據路徑
-            impact_data_path: 災害影響數據路徑
-        """
-        self.data_loader = DataLoader()
-        
-        # 加載數據
-        typhoon_df = self.data_loader.load_typhoon_data(typhoon_data_path)
-        impact_df = self.data_loader.load_impact_data(impact_data_path)
-        
-        # 提取參考颱風特徵
-        self._build_reference_features(typhoon_df)
-        
-        # 構建影響標籤
-        self._build_impact_labels(impact_df)
-        
-        print(f"✓ 流程已初始化")
-        print(f"  - 參考颱風: {len(self.reference_indices)}")
-        print(f"  - 災害類型: {list(self.impact_labels.keys())}")
-    
-    def _build_reference_features(self, typhoon_df: pd.DataFrame):
-        """構建參考颱風特徵"""
-        features_dict = self.feature_extractor.extract_batch(typhoon_df)
-        
-        self.reference_typhoons = list(features_dict.keys())
-        self.reference_features = np.array([
-            features_dict[tid].to_vector() for tid in self.reference_typhoons
-        ])
-        
-        # 建立索引映射
-        for idx, tid in enumerate(self.reference_typhoons):
-            self.reference_indices[tid] = idx
-        
-        # 擬合相似度模型
-        self.similarity_model.fit(self.reference_features)
-    
-    def _build_impact_labels(self, impact_df: pd.DataFrame):
-        """構建災害標籤"""
-        # 為每個參考颱風創建災害標籤
-        n_typhoons = len(self.reference_typhoons)
-        
-        # 按災害類型分類
-        for impact_type in impact_df['impact_type'].unique():
-            labels = np.zeros(n_typhoons, dtype=int)
-            
-            # 為有該類型災害的颱風標記為 1
-            for idx, typhoon_id in enumerate(self.reference_typhoons):
-                if typhoon_id in impact_df[impact_df['impact_type'] == impact_type]['typhoon_id'].values:
-                    labels[idx] = 1
-            
-            self.impact_labels[impact_type] = labels
-    
-    def predict(self, query_typhoon_id: str, k: int = 5) -> PredictionResult:
-        """
-        對單個颱風進行預測
-        
-        Args:
-            query_typhoon_id: 要預測的颱風 ID
-            k: 返回的相似颱風數
-            
-        Returns:
-            PredictionResult 物件
-        """
-        if self.data_loader is None:
-            raise ValueError("流程尚未初始化，請先調用 initialize()")
-        
-        # 取得查詢颱風數據
-        query_typhoon_data = self.data_loader.get_typhoon_by_id(query_typhoon_id)
-        if query_typhoon_data.empty:
-            raise ValueError(f"找不到颱風: {query_typhoon_id}")
-        
-        # 提取查詢颱風特徵
-        query_features = self.feature_extractor.extract(query_typhoon_data)
-        query_vector = query_features.to_vector()
-        
-        # 找相似颱風
-        similar_indices, similar_distances = self.similarity_model.find_similar(query_vector, k)
-        similar_typhoon_ids = [self.reference_typhoons[idx] for idx in similar_indices]
-        
-        # 執行預測
-        predictions = {}
-        for impact_type, impact_labels in self.impact_labels.items():
-            result = self.prediction_model.predict(
-                similar_indices, 
-                similar_distances, 
-                impact_labels
+        self.similarity_method = similarity_method
+        self.alpha = alpha
+        self.feature_weights = feature_weights
+        self.dtw_weights = dtw_weights
+        self.impact_radius_km = impact_radius_km
+
+        self.loader: DataLoader | None = None
+        self.extractor = TyphoonFeatureExtractor(impact_radius_km=impact_radius_km)
+        self.similarity: SimilarityBase | None = None
+        self.model: AnalogModel | None = None
+        self.features: dict[str, TyphoonFeatures] = {}
+        self.label_dict: dict[str, str] = {}
+
+    def initialize(self, processed_dir: str = "data/processed"):
+        """載入資料並建立模型"""
+        print("=" * 60)
+        print("🌀 初始化颱風類比預測系統")
+        print("=" * 60)
+
+        # 1. 載入資料
+        print("\n📂 載入資料...")
+        self.loader = DataLoader(processed_dir)
+        self.loader.load()
+
+        # 2. 提取特徵
+        print("\n🔧 提取特徵...")
+        self.features = self.extractor.extract_all(self.loader)
+
+        # 3. 建立標籤
+        self.label_dict = ImpactMapper.build_label_dict(self.loader)
+
+        # 4. 建立相似度模型
+        print("\n📐 建立相似度模型...")
+        if self.similarity_method == "knn":
+            self.similarity = KNNSimilarity(feature_weights=self.feature_weights)
+        elif self.similarity_method == "dtw":
+            self.similarity = DTWSimilarity(dtw_weights=self.dtw_weights)
+        elif self.similarity_method == "combined":
+            self.similarity = CombinedSimilarity(
+                alpha=self.alpha,
+                feature_weights=self.feature_weights,
+                dtw_weights=self.dtw_weights,
             )
-            predictions[impact_type] = result
-        
-        # 構建結果
-        result = PredictionResult(
-            typhoon_id=query_typhoon_id,
-            query_features=query_features,
-            similar_typhoon_ids=similar_typhoon_ids,
-            similar_distances=similar_distances,
-            predictions=predictions
+        else:
+            raise ValueError(f"不支援的相似度方法：{self.similarity_method}")
+
+        self.similarity.fit(self.features)
+
+        # 5. 建立預測模型
+        self.model = AnalogModel(label_dict=self.label_dict)
+
+        print(f"\n✅ 系統初始化完成（方法={self.similarity_method}）")
+
+    def predict(self, query_id: str, k: int = 5) -> PredictionResult:
+        """對單一颱風做預測"""
+        rec = self.loader.get(query_id)
+
+        # 找相似颱風
+        sim_result = self.similarity.find_similar(query_id, k=k)
+
+        # 預測
+        pred = self.model.predict(
+            query_id=query_id,
+            similar_ids=sim_result.similar_ids,
+            distances=sim_result.distances,
         )
-        
-        return result
-    
-    def predict_batch(self, query_typhoon_ids: List[str], k: int = 5) -> List[PredictionResult]:
+
+        # 組裝相似颱風資訊
+        similar_info = []
+        for analog in pred.get("analogs", []):
+            tid = analog["typhoon_id"]
+            analog_rec = self.loader.get(tid)
+            similar_info.append(
+                {
+                    "typhoon_id": tid,
+                    "name_zh": analog_rec.name_zh,
+                    "name_en": analog_rec.name_en,
+                    "year": analog_rec.year,
+                    "category": analog.get("category"),
+                    "distance": analog.get("distance"),
+                }
+            )
+
+        return PredictionResult(
+            typhoon_id=query_id,
+            name_zh=rec.name_zh,
+            name_en=rec.name_en,
+            true_category=rec.taiwan_track_category,
+            predicted_category=pred.get("predicted_category"),
+            confidence=pred.get("confidence", 0.0),
+            is_correct=pred.get("is_correct"),
+            similar_typhoons=similar_info,
+            category_votes=pred.get("category_votes", {}),
+        )
+
+    def evaluate(self, k: int = 5, verbose: bool = True) -> dict[str, Any]:
         """
-        批量進行預測
-        
-        Args:
-            query_typhoon_ids: 颱風 ID 列表
-            k: 相似颱風數
-            
+        Leave-one-out 評估
+
         Returns:
-            PredictionResult 列表
+            {
+                "accuracy": float,
+                "total": int,
+                "correct": int,
+                "per_category": {cat: {total, correct, accuracy}},
+                "predictions": [PredictionResult],
+                "confusion_data": {(true, pred): count},
+            }
         """
-        results = []
-        
-        for typhoon_id in query_typhoon_ids:
-            try:
-                result = self.predict(typhoon_id, k)
-                results.append(result)
-            except Exception as e:
-                print(f"✗ 預測失敗 {typhoon_id}: {e}")
-        
-        return results
-    
-    def get_prediction_summary(self, result: PredictionResult) -> Dict[str, str]:
-        """
-        生成預測摘要（人類可讀）
-        
-        Args:
-            result: 預測結果
-            
-        Returns:
-            摘要字典
-        """
-        summary = {
-            'typhoon_id': result.typhoon_id,
-            'distance_to_taiwan_km': f"{result.query_features.distance_to_taiwan:.1f}",
-            'max_wind_kmh': f"{result.query_features.max_wind:.1f}",
-            'similar_typhoons': ', '.join(result.similar_typhoon_ids),
+        all_ids = self.loader.get_all_ids()
+        results: list[PredictionResult] = []
+        correct = 0
+        total = 0
+
+        per_category: dict[str, dict] = {}
+        confusion: dict[tuple, int] = {}
+
+        for tid in all_ids:
+            result = self.predict(tid, k=k)
+            results.append(result)
+
+            if result.true_category and result.predicted_category:
+                total += 1
+                true_cat = result.true_category
+                pred_cat = result.predicted_category
+
+                if result.is_correct:
+                    correct += 1
+
+                # 每類統計
+                if true_cat not in per_category:
+                    per_category[true_cat] = {"total": 0, "correct": 0}
+                per_category[true_cat]["total"] += 1
+                if result.is_correct:
+                    per_category[true_cat]["correct"] += 1
+
+                # 混淆矩陣
+                key = (true_cat, pred_cat)
+                confusion[key] = confusion.get(key, 0) + 1
+
+        accuracy = correct / total if total > 0 else 0.0
+
+        # 每類正確率
+        for cat_info in per_category.values():
+            cat_info["accuracy"] = (
+                cat_info["correct"] / cat_info["total"]
+                if cat_info["total"] > 0
+                else 0.0
+            )
+
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"📊 評估結果（k={k}, method={self.similarity_method}）")
+            print(f"{'='*60}")
+            print(f"  總準確率：{accuracy:.1%} ({correct}/{total})")
+            print(f"\n  各類準確率：")
+            for cat in sorted(per_category.keys()):
+                info = per_category[cat]
+                print(
+                    f"    類型 {cat}: {info['accuracy']:.1%} ({info['correct']}/{info['total']})"
+                )
+
+        return {
+            "accuracy": accuracy,
+            "total": total,
+            "correct": correct,
+            "per_category": per_category,
+            "predictions": results,
+            "confusion_data": confusion,
         }
-        
-        # 加入災害預測
-        for impact_type, prediction in result.predictions.items():
-            pred_value = prediction.get('prediction', 0)
-            confidence = prediction.get('confidence', 0)
-            summary[f'{impact_type}_risk'] = f"{pred_value:.2f} (信心: {confidence:.2f})"
-        
-        return summary
+
+    def save_results(self, eval_result: dict, output_dir: str = "outputs/predictions"):
+        """儲存評估結果"""
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        # 預測明細
+        details = []
+        for r in eval_result["predictions"]:
+            details.append(
+                {
+                    "typhoon_id": r.typhoon_id,
+                    "name_zh": r.name_zh,
+                    "name_en": r.name_en,
+                    "true_category": r.true_category,
+                    "predicted_category": r.predicted_category,
+                    "confidence": round(r.confidence, 4),
+                    "is_correct": r.is_correct,
+                    "similar_typhoons": r.similar_typhoons,
+                    "category_votes": {
+                        k: round(v, 4) for k, v in r.category_votes.items()
+                    },
+                }
+            )
+
+        with open(out / "prediction_details.json", "w", encoding="utf-8") as f:
+            json.dump(details, f, ensure_ascii=False, indent=2)
+
+        # 摘要
+        summary = {
+            "method": self.similarity_method,
+            "alpha": self.alpha,
+            "accuracy": round(eval_result["accuracy"], 4),
+            "total": eval_result["total"],
+            "correct": eval_result["correct"],
+            "per_category": eval_result["per_category"],
+        }
+        with open(out / "evaluation_summary.json", "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+
+        print(f"✓ 結果已儲存至 {out}/")

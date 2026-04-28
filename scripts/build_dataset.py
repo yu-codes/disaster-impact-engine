@@ -1,215 +1,211 @@
 """
 數據集構建腳本
-職責：預處理原始數據，生成可用於模型的數據集
+職責：從 typhoon_information_overview.xlsx 篩選有「侵臺路徑分類」的颱風，
+      合併 ibtracs 路徑資料，輸出整合後的 JSON 到 data/processed/
 """
 
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from datetime import datetime, timedelta
+import json
 import argparse
+from pathlib import Path
+from datetime import datetime
 
 
-def generate_sample_typhoon_data(output_path: str, num_typhoons: int = 30):
-    """
-    生成範例颱風數據（用於測試）
-    
-    預期格式：
-    - typhoon_id: 颱風編號
-    - date: 時間
-    - lat: 緯度
-    - lon: 經度
-    - max_wind: 最大風速 (km/h)
-    - central_pressure: 中心氣壓 (hPa)
-    
-    Args:
-        output_path: 輸出文件路徑
-        num_typhoons: 生成的颱風數量
-    """
-    data = []
-    base_date = datetime(2015, 1, 1)
-    
-    for t_id in range(1, num_typhoons + 1):
-        typhoon_id = f"TYPHOON_{t_id:03d}"
-        
-        # 每個颱風有 10-20 個時間步
-        num_steps = np.random.randint(10, 21)
-        
-        # 初始位置（離台灣較遠）
-        init_lat = np.random.uniform(15, 25)
-        init_lon = np.random.uniform(110, 130)
-        
-        # 初始風速和氣壓
-        init_wind = np.random.uniform(100, 200)
-        init_pressure = np.random.uniform(920, 980)
-        
-        for step in range(num_steps):
-            # 模擬颱風逼近台灣
-            progress = step / num_steps
-            lat = init_lat + progress * 8
-            lon = init_lon + progress * 10
-            
-            # 颱風隨時間增強或減弱
-            wind = init_wind + np.random.uniform(-5, 10) * (1 - progress)
-            pressure = init_pressure - np.random.uniform(0, 20) * progress
-            
-            date = base_date + timedelta(hours=t_id * 100 + step * 6)
-            
-            data.append({
-                'typhoon_id': typhoon_id,
-                'date': date.strftime('%Y-%m-%d %H:%M'),
-                'lat': round(lat, 2),
-                'lon': round(lon, 2),
-                'max_wind': round(wind, 1),
-                'central_pressure': round(pressure, 1)
-            })
-    
-    df = pd.DataFrame(data)
-    df.to_csv(output_path, index=False)
-    print(f"✓ 颱風數據已生成: {output_path}")
-    print(f"  - 颱風數: {num_typhoons}")
-    print(f"  - 總記錄數: {len(df)}")
-    
-    return df
+RAW_DIR = Path("data/raw")
+IBTRACS_DIR = RAW_DIR / "typhoon_information_ibtracs"
+OVERVIEW_FILE = RAW_DIR / "typhoon_information_overview.xlsx"
+PROCESSED_DIR = Path("data/processed")
 
 
-def generate_sample_impact_data(typhoon_ids: list, output_path: str):
-    """
-    生成範例災害數據
-    
-    預期格式：
-    - typhoon_id: 颱風編號
-    - impact_type: 災害類型 (flooding/blackout/damage/windfall)
-    - severity: 嚴重程度 (0-4)
-    
-    Args:
-        typhoon_ids: 颱風 ID 列表
-        output_path: 輸出文件路徑
-    """
-    impact_types = ['flooding', 'blackout', 'damage', 'windfall']
-    data = []
-    
-    for typhoon_id in typhoon_ids:
-        # 每個颱風可能有多種災害
-        num_impacts = np.random.randint(0, 4)
-        
-        if num_impacts == 0:
-            # 沒有災害
-            data.append({
-                'typhoon_id': typhoon_id,
-                'impact_type': 'none',
-                'severity': 0
-            })
+def load_overview() -> pd.DataFrame:
+    return pd.read_excel(OVERVIEW_FILE)
+
+
+def filter_typhoons_with_track_category(df: pd.DataFrame) -> pd.DataFrame:
+    mask = df["侵臺路徑分類"].notna() & (df["侵臺路徑分類"] != "---")
+    filtered = df[mask].copy()
+    print(f"✓ 篩選完成：{len(filtered)} / {len(df)} 筆颱風有侵臺路徑分類")
+    return filtered
+
+
+def load_ibtracs_track(year: int, typhoon_id: str) -> list | None:
+    json_path = (
+        IBTRACS_DIR / str(year) / str(typhoon_id) / "ibtracs_position_intensity.json"
+    )
+    if not json_path.exists():
+        return None
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("position_intensity", None)
+
+
+def parse_wind_speed(raw) -> float | None:
+    if pd.isna(raw):
+        return None
+    try:
+        return float(str(raw).split("(")[0].strip())
+    except (ValueError, IndexError):
+        return None
+
+
+def build_typhoon_record(row: pd.Series) -> dict | None:
+    typhoon_id = str(row["颱風編號"])
+    year = int(row["年份"])
+
+    track = load_ibtracs_track(year, typhoon_id)
+    if track is None or len(track) == 0:
+        return None
+
+    return {
+        "typhoon_id": typhoon_id,
+        "year": year,
+        "name_zh": row["中文名稱"],
+        "name_en": row["英文名稱"],
+        "genesis_time": str(row["生成時間"]) if pd.notna(row["生成時間"]) else None,
+        "dissipation_time": str(row["消散時間"]) if pd.notna(row["消散時間"]) else None,
+        "birth_location": {
+            "longitude": float(row["生成經度"]) if pd.notna(row["生成經度"]) else None,
+            "latitude": float(row["生成緯度"]) if pd.notna(row["生成緯度"]) else None,
+        },
+        "max_intensity_value": (
+            float(row["最大強度值"]) if pd.notna(row["最大強度值"]) else None
+        ),
+        "max_intensity_class": row["最大強度"] if pd.notna(row["最大強度"]) else None,
+        "max_sustained_wind_ms": parse_wind_speed(row["近中心最大風速"]),
+        "min_pressure": float(row["最低氣壓"]) if pd.notna(row["最低氣壓"]) else None,
+        "taiwan_track_category": str(row["侵臺路徑分類"]),
+        "landfall_location": row["登陸地段"] if pd.notna(row["登陸地段"]) else None,
+        "movement_summary": row["動態"] if pd.notna(row["動態"]) else None,
+        "disaster_summary": row["災情"] if pd.notna(row["災情"]) else None,
+        "warning_report_count": (
+            str(row["發布報數"]) if pd.notna(row["發布報數"]) else None
+        ),
+        "track_point_count": len(track),
+        "track": track,
+    }
+
+
+def build_dataset(df: pd.DataFrame) -> list:
+    records = []
+    skipped = []
+    for _, row in df.iterrows():
+        record = build_typhoon_record(row)
+        if record is not None:
+            records.append(record)
         else:
-            # 隨機選擇災害類型
-            selected_impacts = np.random.choice(impact_types, num_impacts, replace=False)
-            
-            for impact_type in selected_impacts:
-                severity = np.random.randint(1, 5)  # 1-4 (0 = 無)
-                
-                data.append({
-                    'typhoon_id': typhoon_id,
-                    'impact_type': impact_type,
-                    'severity': severity
-                })
-    
-    df = pd.DataFrame(data)
-    df.to_csv(output_path, index=False)
-    print(f"✓ 災害數據已生成: {output_path}")
-    print(f"  - 颱風數: {len(df[df['impact_type'] != 'none']['typhoon_id'].unique())}")
-    print(f"  - 總記錄數: {len(df)}")
-    
-    return df
+            skipped.append(f"{row['颱風編號']} {row['英文名稱']} ({row['年份']})")
+
+    if skipped:
+        print(f"⚠ 跳過 {len(skipped)} 筆（無路徑資料）：")
+        for s in skipped:
+            print(f"    - {s}")
+    print(f"✓ 成功構建 {len(records)} 筆颱風記錄")
+    return records
 
 
-def clean_typhoon_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    清理颱風數據
-    - 移除重複
-    - 填補缺失值
-    - 驗證範圍
-    """
-    # 移除重複
-    df = df.drop_duplicates(subset=['typhoon_id', 'date'])
-    
-    # 按日期排序
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values(['typhoon_id', 'date'])
-    
-    # 填補缺失的風速（使用前一個值）
-    df['max_wind'] = df.groupby('typhoon_id')['max_wind'].fillna(method='ffill')
-    df['central_pressure'] = df.groupby('typhoon_id')['central_pressure'].fillna(method='ffill')
-    
-    # 移除無效行
-    df = df.dropna(subset=['max_wind', 'central_pressure'])
-    
-    return df
+def save_dataset(records: list, output_dir: Path):
+    output_dir.mkdir(parents=True, exist_ok=True)
 
+    # 完整資料集
+    full_path = output_dir / "typhoons_with_tracks.json"
+    with open(full_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "generated_at": datetime.now().isoformat(),
+                "description": "侵臺颱風完整資料（含 IBTrACS 路徑）",
+                "typhoon_count": len(records),
+                "track_categories": sorted(
+                    set(r["taiwan_track_category"] for r in records)
+                ),
+                "typhoons": records,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+    print(f"✓ 完整資料集已儲存：{full_path}")
 
-def validate_data(typhoon_df: pd.DataFrame, impact_df: pd.DataFrame) -> bool:
-    """驗證數據完整性"""
-    print("\n📊 數據驗證:")
-    
-    # 檢查必要列
-    required_cols_typhoon = ['typhoon_id', 'date', 'lat', 'lon', 'max_wind']
-    if not all(col in typhoon_df.columns for col in required_cols_typhoon):
-        print("  ✗ 颱風數據缺少必要列")
-        return False
-    
-    required_cols_impact = ['typhoon_id', 'impact_type', 'severity']
-    if not all(col in impact_df.columns for col in required_cols_impact):
-        print("  ✗ 災害數據缺少必要列")
-        return False
-    
-    # 檢查数据範圍
-    if not (typhoon_df['max_wind'] > 0).all():
-        print("  ✗ 風速數據異常")
-        return False
-    
-    if not (impact_df['severity'].between(0, 4)).all():
-        print("  ✗ 嚴重程度超出範圍")
-        return False
-    
-    print(f"  ✓ 颱風記錄: {len(typhoon_df)}")
-    print(f"  ✓ 災害記錄: {len(impact_df)}")
-    print(f"  ✓ 所有驗證通過")
-    
-    return True
+    # 索引檔
+    index_records = [
+        {
+            "typhoon_id": r["typhoon_id"],
+            "year": r["year"],
+            "name_zh": r["name_zh"],
+            "name_en": r["name_en"],
+            "taiwan_track_category": r["taiwan_track_category"],
+            "birth_lon": r["birth_location"]["longitude"],
+            "birth_lat": r["birth_location"]["latitude"],
+            "max_sustained_wind_ms": r["max_sustained_wind_ms"],
+            "min_pressure": r["min_pressure"],
+            "max_intensity_class": r["max_intensity_class"],
+            "landfall_location": r["landfall_location"],
+            "track_point_count": r["track_point_count"],
+        }
+        for r in records
+    ]
+
+    index_path = output_dir / "typhoons_index.json"
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index_records, f, ensure_ascii=False, indent=2)
+    print(f"✓ 索引檔已儲存：{index_path}")
+
+    # 統計摘要
+    cat_counts = {}
+    for r in records:
+        cat = r["taiwan_track_category"]
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+    summary = {
+        "total_typhoons": len(records),
+        "category_distribution": dict(sorted(cat_counts.items())),
+        "year_range": [
+            min(r["year"] for r in records),
+            max(r["year"] for r in records),
+        ],
+    }
+    summary_path = output_dir / "dataset_summary.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    print(f"✓ 摘要已儲存：{summary_path}")
+    return summary
 
 
 def main():
-    """主函數"""
-    parser = argparse.ArgumentParser(description='構建颱風災害預測數據集')
-    parser.add_argument('--num-typhoons', type=int, default=30, help='生成的颱風數')
-    parser.add_argument('--output-dir', type=str, default='data/raw', help='輸出目錄')
-    parser.add_argument('--clean', action='store_true', help='執行數據清理')
-    
+    parser = argparse.ArgumentParser(description="構建侵臺颱風資料集")
+    parser.add_argument("--output-dir", type=str, default="data/processed")
     args = parser.parse_args()
-    
-    # 建立輸出目錄
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    
-    # 生成數據
-    print("🔨 開始構建數據集...\n")
-    
-    typhoon_path = f"{args.output_dir}/typhoon.csv"
-    impact_path = f"{args.output_dir}/impact.csv"
-    
-    typhoon_df = generate_sample_typhoon_data(typhoon_path, args.num_typhoons)
-    typhoon_ids = typhoon_df['typhoon_id'].unique().tolist()
-    impact_df = generate_sample_impact_data(typhoon_ids, impact_path)
-    
-    # 數據清理
-    if args.clean:
-        print("\n🧹 清理數據...")
-        typhoon_df = clean_typhoon_data(typhoon_df)
-        typhoon_df.to_csv(typhoon_path, index=False)
-    
-    # 驗證
-    validate_data(typhoon_df, impact_df)
-    
-    print("\n✅ 數據集構建完成！")
+
+    print("=" * 60)
+    print("🌀 構建侵臺颱風資料集")
+    print("=" * 60)
+
+    print("\n📂 載入颱風總覽...")
+    overview_df = load_overview()
+
+    print("\n🔍 篩選有侵臺路徑分類的颱風...")
+    filtered_df = filter_typhoons_with_track_category(overview_df)
+
+    # 只保留有 IBTrACS 匹配的
+    matched_df = filtered_df[filtered_df["IBTrACS是否匹配"] == "是"].copy()
+    print(f"✓ 有 IBTrACS 路徑資料的：{len(matched_df)} 筆")
+
+    print("\n🔨 構建資料集...")
+    records = build_dataset(matched_df)
+
+    print("\n💾 儲存資料集...")
+    summary = save_dataset(records, Path(args.output_dir))
+
+    print(f"\n{'='*60}")
+    print(f"📊 資料集摘要")
+    print(f"{'='*60}")
+    print(f"  總颱風數：{summary['total_typhoons']}")
+    print(f"  年份範圍：{summary['year_range'][0]} ~ {summary['year_range'][1]}")
+    print(f"  路徑分類分布：")
+    for cat, count in sorted(summary["category_distribution"].items()):
+        print(f"    類型 {cat}：{count} 筆")
+    print("\n✅ 資料集構建完成！")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

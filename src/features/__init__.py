@@ -1,4 +1,3 @@
-"""特徵工程模組初始化"""
-from .typhoon import TyphoonFeatureExtractor, TyphoonFeatures
+from .typhoon import TyphoonFeatureExtractor
 
-__all__ = ['TyphoonFeatureExtractor', 'TyphoonFeatures']
+__all__ = ["TyphoonFeatureExtractor"]

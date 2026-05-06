@@ -5,3 +5,4 @@ matplotlib>=3.7
 seaborn>=0.12
 dtaidistance>=2.3
 openpyxl>=3.1
+flask>=3.0

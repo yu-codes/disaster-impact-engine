@@ -46,7 +46,7 @@ class DisasterImpactPipeline:
     def __init__(
         self,
         similarity_method: str = "combined",
-        alpha: float = 0.5,
+        alpha: float = 0.2,
         feature_weights: np.ndarray | None = None,
         dtw_weights: np.ndarray | None = None,
         impact_radius_km: float = 500.0,
@@ -109,7 +109,7 @@ class DisasterImpactPipeline:
         else:
             raise ValueError(f"不支援的相似度方法：{self.similarity_method}")
 
-        if self.similarity_method == "rule_based":
+        if self.similarity_method in ("rule_based", "combined"):
             self.similarity.fit(self.features, loader=self.loader)
         else:
             self.similarity.fit(self.features)

@@ -1,42 +1,68 @@
 {% extends "base.html" %}
 {% block title %}預測詳情 {{ run_id }} — 颱風類比預測系統{% endblock %}
 {% block content %}
-<h1>🎯 預測詳情：{{ run_id }}</h1>
-
-<div class="card">
-    <h2>執行參數</h2>
-    <table>
-        {% for key, val in meta.items() %}
-        {% if key != 'per_category' %}
-        <tr><td style="width:160px;font-weight:600;">{{ key }}</td><td>{{ val }}</td></tr>
-        {% endif %}
-        {% endfor %}
-    </table>
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:0.5rem;">
+    <a href="/predictions" class="btn btn-secondary" style="padding:0.4rem 0.8rem;">← 返回</a>
+    <h1 class="page-title" style="margin:0;">預測結果 {{ run_id }}</h1>
 </div>
 
-{% if meta.get('per_category') %}
+{% if meta %}
+<div class="grid grid-4" style="margin: 1.5rem 0;">
+    {% if meta.method is defined %}
+    <div class="card stat-card">
+        <div class="stat-value" style="font-size:1.3rem;">{{ meta.method }}</div>
+        <div class="stat-label">方法</div>
+    </div>
+    {% endif %}
+    {% if meta.accuracy is defined %}
+    <div class="card stat-card">
+        <div class="stat-value" style="color:{{ 'var(--success)' if meta.accuracy > 0.5 else 'var(--warning)' }}">{{ "%.1f%%"|format(meta.accuracy * 100) }}</div>
+        <div class="stat-label">總準確率</div>
+    </div>
+    {% endif %}
+    {% if meta.total is defined %}
+    <div class="card stat-card">
+        <div class="stat-value">{{ meta.correct|default(0) }}/{{ meta.total }}</div>
+        <div class="stat-label">正確/總數</div>
+    </div>
+    {% endif %}
+    {% if meta.k is defined %}
+    <div class="card stat-card">
+        <div class="stat-value">{{ meta.k }}</div>
+        <div class="stat-label">k 值</div>
+    </div>
+    {% endif %}
+</div>
+
+{% if meta.per_category %}
 <div class="card">
-    <h2>各分類準確率</h2>
-    <table>
-        <thead>
-            <tr><th>分類</th><th>準確率</th><th>正確數</th><th>總數</th></tr>
-        </thead>
-        <tbody>
-            {% for cat, info in meta.per_category.items()|sort %}
+    <h3>各分類準確率</h3>
+    <div class="table-wrapper">
+        <table>
+            <tr><th>分類</th><th>正確</th><th>總數</th><th>準確率</th><th></th></tr>
+            {% for cat, info in meta.per_category|dictsort %}
             <tr>
-                <td>類型 {{ cat }}</td>
-                <td><strong>{{ "%.1f%%"|format(info.accuracy * 100) }}</strong></td>
+                <td><span class="badge badge-primary">類型 {{ cat }}</span></td>
                 <td>{{ info.correct }}</td>
                 <td>{{ info.total }}</td>
+                <td style="font-weight:600;color:{{ 'var(--success)' if info.accuracy > 0.5 else 'var(--danger)' }}">{{ "%.1f%%"|format(info.accuracy * 100) }}</td>
+                <td style="width:40%;">
+                    <div style="height:20px;background:#f1f5f9;border-radius:10px;overflow:hidden;">
+                        <div style="width:{{ info.accuracy * 100 }}%;height:100%;background:{{ 'var(--success)' if info.accuracy > 0.5 else 'var(--danger)' }};border-radius:10px;"></div>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
-        </tbody>
-    </table>
+        </table>
+    </div>
 </div>
 {% endif %}
+{% endif %}
 
-<h2>圖表</h2>
 {% if images %}
+<div class="card">
+    <h3>分析圖表</h3>
+</div>
 <div class="grid grid-2">
     {% for img in images %}
     <div class="card img-container">
@@ -45,10 +71,5 @@
     </div>
     {% endfor %}
 </div>
-{% else %}
-<div class="card"><p>此版本無圖表。</p></div>
 {% endif %}
-
-<br>
-<a href="/predictions" class="btn">← 返回列表</a>
 {% endblock %}

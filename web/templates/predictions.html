@@ -1,49 +1,43 @@
 {% extends "base.html" %}
 {% block title %}預測結果 — 颱風類比預測系統{% endblock %}
 {% block content %}
-<h1>🎯 預測結果</h1>
+<h1 class="page-title">預測結果</h1>
+<p class="page-subtitle">各版本預測實驗的結果記錄，按時間倒序排列</p>
 
 {% if runs %}
-<table>
-    <thead>
-        <tr>
-            <th>執行時間</th>
-            <th>算法</th>
-            <th>準確率</th>
-            <th>正確/總數</th>
-            <th>α</th>
-            <th>k</th>
-            <th>操作</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for run in runs %}
-        <tr>
-            <td>{{ run.run_id }}</td>
-            <td>
-                {% set m = run.meta.get('method', '?') %}
-                {% if m == 'baseline' %}
-                <span class="badge badge-red">{{ m }}</span>
-                {% elif m == 'rule_based' %}
-                <span class="badge badge-green">{{ m }}</span>
-                {% elif m == 'combined' %}
-                <span class="badge badge-blue">{{ m }}</span>
-                {% else %}
-                <span class="badge badge-gray">{{ m }}</span>
+<div class="grid" style="grid-template-columns: 1fr;">
+    {% for run in runs %}
+    <div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+        <div style="flex:1;min-width:200px;">
+            <div style="font-weight:600;font-size:1rem;margin-bottom:0.25rem;">
+                {{ run.run_id }}
+            </div>
+            {% if run.meta %}
+            <div style="display:flex;gap:1rem;flex-wrap:wrap;font-size:0.85rem;color:var(--text-secondary);">
+                {% if run.meta.method %}
+                <span>方法: <span class="badge badge-primary">{{ run.meta.method }}</span></span>
                 {% endif %}
-            </td>
-            <td><strong>{{ "%.1f%%"|format((run.meta.get('accuracy', 0)) * 100) }}</strong></td>
-            <td>{{ run.meta.get('correct', '?') }} / {{ run.meta.get('total', '?') }}</td>
-            <td>{{ run.meta.get('alpha', '-') }}</td>
-            <td>{{ run.meta.get('k', '-') }}</td>
-            <td><a href="/predictions/{{ run.run_id }}" class="btn">詳情</a></td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+                {% if run.meta.accuracy is defined %}
+                <span>準確率: <strong style="color:{{ 'var(--success)' if run.meta.accuracy > 0.5 else 'var(--warning)' }}">{{ "%.1f%%"|format(run.meta.accuracy * 100) }}</strong></span>
+                {% endif %}
+                {% if run.meta.total is defined %}
+                <span>{{ run.meta.correct|default(0) }}/{{ run.meta.total }} 正確</span>
+                {% endif %}
+                {% if run.meta.k is defined %}
+                <span>k={{ run.meta.k }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        <a href="/predictions/{{ run.run_id }}" class="btn btn-primary">查看詳情</a>
+    </div>
+    {% endfor %}
+</div>
 {% else %}
-<div class="card">
-    <p>尚無預測結果。請先執行 <code>python scripts/run_prediction.py</code></p>
+<div class="card" style="text-align:center;padding:4rem 2rem;color:var(--text-secondary);">
+    <div style="font-size:3rem;margin-bottom:1rem;">📭</div>
+    <p>尚無預測結果</p>
+    <p style="font-size:0.85rem;margin-top:0.5rem;">執行 <code>python scripts/run_prediction.py</code> 產生預測結果</p>
 </div>
 {% endif %}
 {% endblock %}

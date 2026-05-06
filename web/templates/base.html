@@ -4,66 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}颱風類比預測系統{% endblock %}</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Microsoft JhengHei', 'Segoe UI', sans-serif; background: #f5f7fa; color: #333; }
-        nav { background: #1a237e; color: white; padding: 0.8rem 2rem; display: flex; align-items: center; gap: 2rem; }
-        nav a { color: rgba(255,255,255,0.85); text-decoration: none; font-size: 0.95rem; padding: 0.3rem 0.8rem; border-radius: 4px; transition: background 0.2s; }
-        nav a:hover, nav a.active { background: rgba(255,255,255,0.15); color: white; }
-        nav .brand { font-size: 1.2rem; font-weight: bold; color: white; margin-right: 1rem; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem; }
-        h1 { font-size: 1.6rem; margin-bottom: 1rem; color: #1a237e; }
-        h2 { font-size: 1.3rem; margin: 1.5rem 0 0.8rem; color: #283593; }
-        .card { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 1.2rem; margin-bottom: 1rem; }
-        .grid { display: grid; gap: 1rem; }
-        .grid-2 { grid-template-columns: repeat(auto-fill, minmax(550px, 1fr)); }
-        .grid-3 { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
-        .img-container { text-align: center; }
-        .img-container img { max-width: 100%; height: auto; border-radius: 4px; cursor: pointer; transition: transform 0.2s; }
-        .img-container img:hover { transform: scale(1.02); }
-        .img-caption { font-size: 0.85rem; color: #666; margin-top: 0.3rem; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-        th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid #e0e0e0; }
-        th { background: #e8eaf6; font-weight: 600; }
-        tr:hover { background: #f5f5f5; }
-        .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.8rem; font-weight: 600; }
-        .badge-blue { background: #e3f2fd; color: #1565c0; }
-        .badge-green { background: #e8f5e9; color: #2e7d32; }
-        .badge-red { background: #fce4ec; color: #c62828; }
-        .badge-gray { background: #f5f5f5; color: #616161; }
-        a.btn { display: inline-block; padding: 0.5rem 1rem; background: #1a237e; color: white; text-decoration: none; border-radius: 6px; font-size: 0.9rem; transition: background 0.2s; }
-        a.btn:hover { background: #283593; }
-        .btn { padding: 0.5rem 1rem; background: #1a237e; color: white; border: none; border-radius: 6px; font-size: 0.9rem; cursor: pointer; transition: background 0.2s; }
-        .btn:hover { background: #283593; }
-        .btn:disabled { background: #9e9e9e; cursor: not-allowed; }
-        textarea { width: 100%; font-family: 'Consolas', monospace; font-size: 0.85rem; padding: 0.8rem; border: 1px solid #ccc; border-radius: 6px; resize: vertical; }
-        .form-group { margin-bottom: 1rem; }
-        .form-group label { display: block; font-weight: 600; margin-bottom: 0.3rem; }
-        .form-row { display: flex; gap: 1rem; align-items: end; }
-        .form-row .form-group { flex: 1; }
-        select, input[type="number"] { padding: 0.4rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }
-        .result-box { margin-top: 1rem; padding: 1rem; background: #f0f4ff; border-radius: 6px; border-left: 4px solid #1a237e; }
-        .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #ccc; border-top-color: #1a237e; border-radius: 50%; animation: spin 0.8s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        /* modal for full-size image */
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; cursor: pointer; }
-        .modal-overlay.active { display: flex; }
-        .modal-overlay img { max-width: 95%; max-height: 95%; border-radius: 6px; }
-    </style>
+    <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <nav>
-        <span class="brand">🌀 颱風類比預測系統</span>
-        <a href="/" {% if request.path == '/' %}class="active"{% endif %}>首頁</a>
-        <a href="/analysis" {% if request.path == '/analysis' %}class="active"{% endif %}>資料分析</a>
-        <a href="/predictions" {% if '/predictions' in request.path %}class="active"{% endif %}>預測結果</a>
-        <a href="/predict" {% if request.path == '/predict' %}class="active"{% endif %}>線上預測</a>
+    <nav class="navbar">
+        <div class="navbar-inner">
+            <a href="/" class="brand">🌀 颱風類比預測系統</a>
+            <div class="nav-links">
+                <a href="/" {% if request.path == '/' %}class="active"{% endif %}>首頁</a>
+                <a href="/methods" {% if request.path == '/methods' %}class="active"{% endif %}>方法說明</a>
+                <a href="/analysis" {% if request.path == '/analysis' %}class="active"{% endif %}>資料分析</a>
+                <a href="/predictions" {% if '/predictions' in request.path %}class="active"{% endif %}>預測結果</a>
+                <a href="/predict" {% if request.path == '/predict' %}class="active"{% endif %}>線上預測</a>
+            </div>
+        </div>
     </nav>
     <div class="container">
         {% block content %}{% endblock %}
     </div>
 
-    <!-- 圖片放大 modal -->
+    <!-- Image modal -->
     <div class="modal-overlay" id="imgModal" onclick="this.classList.remove('active')">
         <img id="modalImg" src="" alt="">
     </div>

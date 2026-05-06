@@ -47,6 +47,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/methods")
+def methods_page():
+    return render_template("methods.html")
+
+
 @app.route("/analysis")
 def analysis_page():
     # 收集 analysis 目錄下的所有圖片

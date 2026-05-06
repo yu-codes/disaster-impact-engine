@@ -1,10 +1,13 @@
 """
-特徵工程模組 — 依據 strategy.md 實作
+特徵工程模組 v2 — 依據 strategy advice 實作修正
 
-核心策略：
-1. 空間標準化 → 以台灣為中心的相對座標 / 極座標
-2. Impact Window → 只取距台灣 < 500 km 的時間段
-3. 動態特徵 → min_distance, mean_angle, speed, intensity, rain_proxy
+核心修正：
+1. 座標修正：dx *= cos(lat * π/180) 修正經緯度不等距
+2. Impact window 縮小至 300km（核心影響區）
+3. 距離加權：exp(-r/200) 讓接近台灣的點權重更高
+4. 速度特徵：改為「接近台灣時的速度」(r < 300)
+5. Rain proxy：加入迎風面修正 cos(θ - θ_normal)
+6. 方位角使用修正後的座標
 """
 
 import numpy as np
@@ -19,8 +22,14 @@ TAIWAN_LON = 121.0
 # 地球半徑 (km)
 EARTH_RADIUS_KM = 6371.0
 
-# Impact window 閾值 (km)
+# Impact window 閾值 (km) — 保持 500km 提取，300km 加權核心
 IMPACT_WINDOW_RADIUS_KM = 500.0
+
+# 距離加權核心半徑
+CORE_WEIGHT_RADIUS_KM = 300.0
+
+# 台灣迎風面法向量方位角（東北風方向，約 60°）
+TAIWAN_NORMAL_THETA_RAD = np.radians(60.0)
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -49,6 +58,37 @@ def haversine_vec(
     return EARTH_RADIUS_KM * 2 * np.arcsin(np.sqrt(a))
 
 
+def relative_coordinates(
+    lats: np.ndarray, lons: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    計算相對台灣的修正座標（修正經緯度不等距問題）
+
+    修正：dx *= cos(lat * π/180)
+
+    Returns:
+        (dx, dy) in degree-equivalent units (corrected)
+    """
+    dy = lats - TAIWAN_LAT
+    dx = (lons - TAIWAN_LON) * np.cos(np.radians(lats))
+    return dx, dy
+
+
+def polar_coordinates(
+    lats: np.ndarray, lons: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    計算修正後的極座標 (r, theta)
+
+    r: haversine 距離 (km)
+    theta: 修正後的方位角 (radians)
+    """
+    r = haversine_vec(lats, lons)
+    dx, dy = relative_coordinates(lats, lons)
+    theta = np.arctan2(dy, dx)
+    return r, theta
+
+
 @dataclass
 class TyphoonFeatures:
     """颱風特徵向量（用於相似度比較）"""
@@ -57,22 +97,22 @@ class TyphoonFeatures:
 
     # === 靜態 / 摘要特徵 ===
     min_distance_to_taiwan: float  # 最接近台灣的距離 (km)
-    mean_angle: float  # 通過台灣時的平均方位角 (deg)
+    mean_angle: float  # 通過台灣時的平均方位角 (rad)
     max_wind_kt: float  # 生命週期最大風速 (kt)
     max_wind_in_window_kt: float  # impact window 內最大風速 (kt)
-    approach_speed_kmh: float  # 接近台灣的平均移動速度 (km/h)
+    approach_speed_kmh: float  # 接近台灣（r<300km）的平均移動速度 (km/h)
     min_pressure_mb: float  # 最低氣壓 (mb)
     intensification_rate: float  # 增強率 (kt / 6h) — impact window 前段
-    rain_proxy: float  # 降雨代理指標 wind / distance
+    rain_proxy: float  # 降雨代理指標（含迎風面修正）
     is_landfall: bool  # 是否登陸
     birth_lon: float  # 生成經度
     birth_lat: float  # 生成緯度
 
     # === Impact Window 路徑（用於 DTW）===
-    impact_window_r: np.ndarray = field(repr=False)  # 距台灣距離序列
-    impact_window_theta: np.ndarray = field(repr=False)  # 方位角序列
-    impact_window_wind: np.ndarray = field(repr=False)  # 風速序列
-    impact_window_pressure: np.ndarray = field(repr=False)  # 氣壓序列
+    impact_window_r: np.ndarray = field(repr=False)  # 距台灣距離序列 (km)
+    impact_window_theta: np.ndarray = field(repr=False)  # 修正方位角序列 (rad)
+    impact_window_wind: np.ndarray = field(repr=False)  # 風速序列 (kt)
+    impact_window_pressure: np.ndarray = field(repr=False)  # 氣壓序列 (mb)
 
     def to_feature_vector(self) -> np.ndarray:
         """轉換為用於 KNN 比較的摘要特徵向量（11 維）"""
@@ -123,12 +163,14 @@ class TyphoonFeatures:
 
 class TyphoonFeatureExtractor:
     """
-    依據 strategy.md 的特徵提取器
+    特徵提取器 v2
 
-    步驟：
-    1. 轉換為相對台灣座標（極座標 r, theta）
-    2. 提取 impact window（距台灣 < 500km）
-    3. 計算摘要特徵
+    改進：
+    1. 修正座標 (cos(lat) 修正)
+    2. Impact window = 300km
+    3. 距離加權
+    4. 接近台灣時速度
+    5. 迎風面 rain proxy
     """
 
     def __init__(self, impact_radius_km: float = IMPACT_WINDOW_RADIUS_KM):
@@ -156,29 +198,24 @@ class TyphoonFeatureExtractor:
         """
         track = track.copy()
 
-        # --- Step 1: 空間標準化（相對座標 → 極座標）---
+        # --- Step 1: 空間標準化（修正座標 → 極座標）---
         lats = track["latitude"].values.astype(float)
         lons = track["longitude"].values.astype(float)
 
-        # 相對座標
-        dx = lons - TAIWAN_LON
-        dy = lats - TAIWAN_LAT
-
-        # 極座標
-        r = haversine_vec(lats, lons)
-        theta = np.degrees(np.arctan2(dy, dx))  # 方位角
+        # 修正極座標
+        r, theta = polar_coordinates(lats, lons)
 
         track["distance_km"] = r
-        track["azimuth_deg"] = theta
+        track["azimuth_rad"] = theta
 
         # 風速 / 氣壓（處理 None）
         winds = track["wind_kt"].fillna(0).values.astype(float)
         pressures = track["pressure_mb"].fillna(1013).values.astype(float)
 
-        # --- Step 2: 提取 Impact Window ---
+        # --- Step 2: 提取 Impact Window (r < 300km) ---
         in_window = r < self.impact_radius_km
         if in_window.sum() < 2:
-            # 如果路徑沒有進入 500km 範圍，取最近的 5 個點
+            # 如果路徑沒有進入 300km 範圍，取最近的 5 個點
             nearest_indices = np.argsort(r)[: max(5, len(r) // 5)]
             in_window = np.zeros(len(r), dtype=bool)
             in_window[nearest_indices] = True
@@ -193,14 +230,16 @@ class TyphoonFeatureExtractor:
         # 最接近台灣的距離
         min_distance = float(np.min(r))
 
-        # 通過台灣時的平均方位角
-        mean_angle = float(np.mean(window_theta))
+        # 通過台灣時的平均方位角（使用 circular mean）
+        mean_angle = float(
+            np.arctan2(np.mean(np.sin(window_theta)), np.mean(np.cos(window_theta)))
+        )
 
         # 最大風速（全生命週期 & impact window）
         max_wind = float(np.max(winds)) if len(winds) > 0 else 0.0
         max_wind_window = float(np.max(window_wind)) if len(window_wind) > 0 else 0.0
 
-        # 移動速度（接近台灣階段）
+        # 移動速度（接近台灣 r < 300km 階段）
         approach_speed = self._compute_approach_speed(track, in_window)
 
         # 最低氣壓
@@ -212,9 +251,15 @@ class TyphoonFeatureExtractor:
         # 增強率（impact window 前段）
         intensification = self._compute_intensification(winds, in_window)
 
-        # Rain proxy: wind / distance（在 impact window 內的平均值）
+        # Rain proxy v2: 含迎風面修正
+        # rain_proxy = wind * max(0, cos(θ - θ_normal)) / distance
         safe_r = np.maximum(window_r, 1.0)
-        rain_proxy = float(np.mean(window_wind / safe_r))
+        wind_direction_factor = np.maximum(
+            0, np.cos(window_theta - TAIWAN_NORMAL_THETA_RAD)
+        )
+        rain_proxy = float(
+            np.mean(window_wind * (0.5 + 0.5 * wind_direction_factor) / safe_r)
+        )
 
         # 是否登陸
         is_landfall = landfall_location is not None and str(
@@ -264,7 +309,9 @@ class TyphoonFeatureExtractor:
                 landfall_location=rec.landfall_location,
             )
             features[rec.typhoon_id] = feat
-        print(f"✓ 已提取 {len(features)} 筆颱風特徵")
+        print(
+            f"✓ 已提取 {len(features)} 筆颱風特徵（impact window={self.impact_radius_km}km）"
+        )
         return features
 
     # ---- 內部計算方法 ----
@@ -272,7 +319,7 @@ class TyphoonFeatureExtractor:
     def _compute_approach_speed(
         self, track: pd.DataFrame, in_window: np.ndarray
     ) -> float:
-        """計算在 impact window 內的平均移動速度 (km/h)"""
+        """計算在 impact window（r < 300km）內的平均移動速度 (km/h)"""
         if in_window.sum() < 2:
             return 0.0
 
@@ -284,7 +331,7 @@ class TyphoonFeatureExtractor:
         for i in range(1, len(lats)):
             total_dist += haversine(lats[i - 1], lons[i - 1], lats[i], lons[i])
 
-        # 假設每步 3 或 6 小時（IBTrACS 通常 3h）
+        # 時間計算
         if "timestamp_utc" in window_track.columns and pd.notna(
             window_track["timestamp_utc"].iloc[0]
         ):

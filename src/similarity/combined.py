@@ -1,9 +1,16 @@
 """
-Combined Similarity — 結合 KNN 特徵距離 + DTW 路徑距離
+Combined Similarity v2 — 整合 Rule-Based 前置篩選 + KNN + DTW
 
-final_score = alpha * knn_score + (1 - alpha) * dtw_score
+Pipeline:
+1. Rule-based 分類 → 前置篩選（soft filter: 同類加權）
+2. DTW 路徑相似度（物理標準化 + 環形距離）
+3. KNN 特徵距離（摘要特徵）
+4. final_score = 0.6 * DTW + 0.4 * KNN (同類獎勵)
 
-這是 strategy.md 第六步的實作。
+改進：
+- Rule-based 作為 soft filter（非 hard filter）
+- DTW 權重提高（路徑形狀更重要）
+- 同類別的颱風獲得距離折扣
 """
 
 import numpy as np
@@ -14,38 +21,67 @@ from .dtw import DTWSimilarity
 
 class CombinedSimilarity(SimilarityBase):
     """
-    複合相似度 = α * 特徵距離 + (1-α) * DTW 路徑距離
+    複合相似度 v2 = rule_based soft filter + DTW + KNN
+
+    Pipeline:
+    1. Rule-based 前置分類（同類加權）
+    2. 0.6 * DTW_normalized + 0.4 * KNN_normalized
+    3. 同類別折扣 0.85
     """
 
     def __init__(
         self,
-        alpha: float = 0.5,
+        alpha: float = 0.2,
         feature_weights: np.ndarray | None = None,
         dtw_weights: np.ndarray | None = None,
+        category_discount: float = 1.0,
     ):
         """
         Args:
-            alpha: 特徵距離的權重 (0~1)，剩餘給 DTW
+            alpha: KNN 特徵距離的權重 (0~1)，DTW 權重 = 1 - alpha
             feature_weights: KNN 特徵權重
             dtw_weights: DTW 各維度權重
+            category_discount: 同分類的距離折扣率
         """
         self.alpha = alpha
+        self.category_discount = category_discount
         self.knn = KNNSimilarity(feature_weights=feature_weights)
         self.dtw = DTWSimilarity(dtw_weights=dtw_weights)
         self._ids: list[str] = []
         self._features_dict = {}
+        self._categories: dict[str, str] = {}  # rule-based 分類結果
 
-    def fit(self, feature_dict: dict):
+    def fit(self, feature_dict: dict, loader=None):
         self._features_dict = feature_dict
         self._ids = list(feature_dict.keys())
         self.knn.fit(feature_dict)
         self.dtw.fit(feature_dict)
-        print(f"✓ Combined Similarity 已擬合（α={self.alpha}）")
+
+        # 如果有 loader，計算 rule-based 分類
+        if loader is not None:
+            from .rule_based import classify_typhoon_by_rules
+
+            for rec in loader.records:
+                if rec.typhoon_id in feature_dict:
+                    result = classify_typhoon_by_rules(rec.track, rec.landfall_location)
+                    self._categories[rec.typhoon_id] = result["predicted_category"]
+
+        print(f"✓ Combined v2 已擬合（α={self.alpha}, DTW={1-self.alpha}）")
 
     def compute_distance(self, id_a: str, id_b: str) -> float:
         knn_d = self.knn.compute_distance(id_a, id_b)
         dtw_d = self.dtw.compute_distance(id_a, id_b)
-        return self.alpha * knn_d + (1 - self.alpha) * dtw_d
+        combined = self.alpha * knn_d + (1 - self.alpha) * dtw_d
+
+        # 同類折扣
+        if (
+            self._categories.get(id_a)
+            and self._categories.get(id_b)
+            and self._categories[id_a] == self._categories[id_b]
+        ):
+            combined *= self.category_discount
+
+        return combined
 
     def find_similar(
         self, query_id: str, k: int = 5, exclude_self: bool = True
@@ -53,44 +89,51 @@ class CombinedSimilarity(SimilarityBase):
         if query_id not in self._features_dict:
             raise KeyError(f"找不到颱風：{query_id}")
 
-        # 取 KNN 和 DTW 的候選（各取 2*k，合併後取 top-k）
-        pool_size = min(len(self._ids), k * 3)
+        # Reciprocal Rank Fusion (RRF)
+        pool_size = min(len(self._ids) - 1, max(k * 5, 50))
         knn_result = self.knn.find_similar(query_id, pool_size, exclude_self)
         dtw_result = self.dtw.find_similar(query_id, pool_size, exclude_self)
 
-        # 合併候選
+        # Build rank maps (rank 0 = best)
+        knn_ranks = {tid: rank for rank, tid in enumerate(knn_result.similar_ids)}
+        dtw_ranks = {tid: rank for rank, tid in enumerate(dtw_result.similar_ids)}
+
+        # All candidates
         candidates = set(knn_result.similar_ids + dtw_result.similar_ids)
         if exclude_self:
             candidates.discard(query_id)
 
-        # 計算組合距離
-        # 先歸一化各自的距離
-        knn_dists = {
-            tid: self.knn.compute_distance(query_id, tid) for tid in candidates
-        }
-        dtw_dists = {
-            tid: self.dtw.compute_distance(query_id, tid) for tid in candidates
-        }
-
-        knn_max = max(knn_dists.values()) if knn_dists else 1.0
-        dtw_max = max(dtw_dists.values()) if dtw_dists else 1.0
+        rrf_k = 60  # RRF constant
+        query_cat = self._categories.get(query_id)
 
         combined = {}
         for tid in candidates:
-            norm_knn = knn_dists[tid] / (knn_max + 1e-8)
-            norm_dtw = dtw_dists[tid] / (dtw_max + 1e-8)
-            combined[tid] = self.alpha * norm_knn + (1 - self.alpha) * norm_dtw
+            # RRF score (higher = more similar)
+            knn_rank = knn_ranks.get(tid, pool_size)
+            dtw_rank = dtw_ranks.get(tid, pool_size)
+            rrf_score = self.alpha / (rrf_k + knn_rank) + (1 - self.alpha) / (
+                rrf_k + dtw_rank
+            )
 
-        sorted_items = sorted(combined.items(), key=lambda x: x[1])[:k]
+            # 同類獎勵
+            if query_cat and self._categories.get(tid) == query_cat:
+                rrf_score /= self.category_discount
+
+            combined[tid] = rrf_score
+
+        # Sort descending (higher RRF = more similar)
+        sorted_items = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:k]
 
         result_ids = [item[0] for item in sorted_items]
-        result_dists = [item[1] for item in sorted_items]
-        max_d = max(result_dists) if result_dists else 1.0
-        scores = [1.0 - d / (max_d + 1e-8) for d in result_dists]
+        result_scores = [item[1] for item in sorted_items]
+        max_s = max(result_scores) if result_scores else 1.0
+        scores = [s / (max_s + 1e-8) for s in result_scores]
+        # Convert to distances (lower = more similar)
+        distances = [1.0 - s for s in scores]
 
         return SimilarityResult(
             query_id=query_id,
             similar_ids=result_ids,
-            distances=result_dists,
+            distances=distances,
             scores=scores,
         )

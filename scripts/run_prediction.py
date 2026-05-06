@@ -98,7 +98,7 @@ def main():
         help="相似度計算方法",
     )
     parser.add_argument(
-        "--alpha", type=float, default=0.5, help="combined 模式下特徵權重 (0~1)"
+        "--alpha", type=float, default=0.2, help="combined 模式下特徵權重 (0~1)"
     )
     parser.add_argument("--k", type=int, default=5, help="相似颱風數量")
     parser.add_argument(

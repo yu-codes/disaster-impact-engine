@@ -1,36 +1,108 @@
 {% extends "base.html" %}
 {% block title %}首頁 — 颱風類比預測系統{% endblock %}
 {% block content %}
-<h1>颱風類比災害預測系統</h1>
-<div class="grid grid-3">
-    <div class="card">
-        <h2>📊 資料分析</h2>
-        <p>探索 207 筆侵臺颱風的路徑分類、強度、生成位置、特徵相關性等分析圖表。</p>
-        <br>
-        <a href="/analysis" class="btn">查看分析</a>
+<h1 class="page-title">颱風類比災害預測系統</h1>
+<p class="page-subtitle">基於歷史颱風軌跡與多維特徵比對，找出最相似的歷史颱風並預測侵臺路徑分類</p>
+
+<!-- Stats Overview -->
+<div class="grid grid-4" style="margin-bottom: 2rem;">
+    <div class="card stat-card">
+        <div class="stat-value">207+</div>
+        <div class="stat-label">歷史颱風紀錄</div>
     </div>
-    <div class="card">
-        <h2>🎯 預測結果</h2>
-        <p>瀏覽各次預測實驗的結果，含不同算法（Baseline、KNN+DTW、規則式）的比較。</p>
-        <br>
-        <a href="/predictions" class="btn">查看結果</a>
+    <div class="card stat-card">
+        <div class="stat-value">10</div>
+        <div class="stat-label">路徑分類類型</div>
     </div>
-    <div class="card">
-        <h2>🔮 線上預測</h2>
-        <p>輸入自訂颱風路徑 JSON，即時查詢最相似的歷史颱風並產出分析圖表。</p>
-        <br>
-        <a href="/predict" class="btn">開始預測</a>
+    <div class="card stat-card">
+        <div class="stat-value">2</div>
+        <div class="stat-label">預測方法</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-value">1958-2025</div>
+        <div class="stat-label">資料涵蓋年份</div>
     </div>
 </div>
 
-<div class="card" style="margin-top:1rem;">
-    <h2>方法概述</h2>
-    <table>
-        <tr><th>步驟</th><th>說明</th></tr>
-        <tr><td>1. 空間標準化</td><td>以台灣 (23.7°N, 121°E) 為原點，計算極座標 (r, θ)</td></tr>
-        <tr><td>2. 時間對齊</td><td>DTW 比對 500km 影響窗口內的多維序列</td></tr>
-        <tr><td>3. 多維特徵</td><td>11 維特徵向量（距離、方位角、風速、氣壓、移動速度…）</td></tr>
-        <tr><td>4. 混合評分</td><td>Combined = α × 特徵距離 + (1−α) × DTW 距離</td></tr>
-    </table>
+<!-- Feature Cards -->
+<div class="grid grid-3">
+    <div class="card">
+        <div class="card-header">
+            <span class="icon">📊</span>
+            <h3>資料分析</h3>
+        </div>
+        <div class="card-body">
+            <p>探索歷史侵臺颱風的路徑分類分布、強度統計、生成位置、特徵相關性等 EDA 圖表。</p>
+        </div>
+        <a href="/analysis" class="btn btn-primary">查看分析</a>
+    </div>
+    <div class="card">
+        <div class="card-header">
+            <span class="icon">🎯</span>
+            <h3>預測結果</h3>
+        </div>
+        <div class="card-body">
+            <p>瀏覽各版本預測實驗結果，包含 Combined、Rule-Based、KNN 等不同方法的準確率比較。</p>
+        </div>
+        <a href="/predictions" class="btn btn-primary">查看結果</a>
+    </div>
+    <div class="card">
+        <div class="card-header">
+            <span class="icon">🔮</span>
+            <h3>線上預測</h3>
+        </div>
+        <div class="card-body">
+            <p>輸入颱風路徑資料或選擇範例，即時查詢最相似歷史颱風並產出預測分析。</p>
+        </div>
+        <a href="/predict" class="btn btn-accent">開始預測</a>
+    </div>
+</div>
+
+<!-- Method Overview -->
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">
+        <span class="icon">⚙️</span>
+        <h3>系統流程概述</h3>
+    </div>
+    <div class="pipeline-step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+            <div class="step-title">空間標準化</div>
+            <div class="step-desc">以台灣 (23.7°N, 121°E) 為原點，修正經緯度不等距問題，計算極座標 (r, θ)</div>
+        </div>
+    </div>
+    <div class="pipeline-step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+            <div class="step-title">Impact Window 提取</div>
+            <div class="step-desc">取距台灣 300km 內的軌跡段落，並以 exp(-r/200) 加權</div>
+        </div>
+    </div>
+    <div class="pipeline-step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+            <div class="step-title">多維相似度計算</div>
+            <div class="step-desc">DTW 路徑對齊（環形角度 + Sakoe-Chiba）+ KNN 特徵距離（11維向量）</div>
+        </div>
+    </div>
+    <div class="pipeline-step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+            <div class="step-title">預測與評估</div>
+            <div class="step-desc">Combined Score 融合 + Rule-Based 同類折扣 → 加權投票預測路徑分類</div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Links -->
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header">
+        <span class="icon">📖</span>
+        <h3>方法文件</h3>
+    </div>
+    <div class="grid grid-2" style="gap: 1rem;">
+        <a href="/methods#analog" class="btn btn-secondary" style="justify-content: start;">📐 類比相似度預測法 (Analog Similarity)</a>
+        <a href="/methods#rule-based" class="btn btn-secondary" style="justify-content: start;">📏 規則式路徑分類法 (Rule-Based)</a>
+    </div>
 </div>
 {% endblock %}

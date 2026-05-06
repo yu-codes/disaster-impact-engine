@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}方法說明 — 颱風類比預測系統{% endblock %}
+{% block content %}
+<h1 class="page-title">方法說明</h1>
+<p class="page-subtitle">系統使用兩種互補的方法進行颱風路徑分類預測</p>
+
+<!-- Tabs -->
+<div class="tabs">
+    <div class="tab active" onclick="showTab('analog')">類比相似度預測法</div>
+    <div class="tab" onclick="showTab('rulebased')">規則式路徑分類法</div>
+</div>
+
+<!-- Analog Similarity Method -->
+<div id="tab-analog" class="tab-content">
+    <div class="card">
+        <div class="card-header">
+            <span class="icon">📐</span>
+            <h3 id="analog">類比相似度預測法 (Analog Similarity Method)</h3>
+        </div>
+        <div class="card-body">
+            <p>結合 DTW 路徑對齊 + KNN 特徵距離 + Rule-Based 前置分類的混合方法。核心理念：找的不是「路徑長得像」，而是「對台灣產生類似影響的動態行為」。</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>決策流程</h3>
+        <div class="pipeline-step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+                <div class="step-title">空間標準化</div>
+                <div class="step-desc">修正座標：dx = (lon-121) × cos(lat×π/180)，dy = lat - 23.7 → 極座標 (r, θ)</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+                <div class="step-title">Impact Window 提取 (r < 300km)</div>
+                <div class="step-desc">只取影響核心區，距離加權 exp(-r/200) 讓接近台灣的點權重更高</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+                <div class="step-title">Rule-Based 前置分類</div>
+                <div class="step-desc">使用規則式方法預分類，同類別的颱風在最終距離上獲得 ×0.85 折扣</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+                <div class="step-title">DTW 路徑相似度</div>
+                <div class="step-desc">環形方位角距離 + 物理標準化 (Δr/300, Δθ/π, Δwind/100) + Sakoe-Chiba band (30%)</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">5</div>
+            <div class="step-content">
+                <div class="step-title">KNN 特徵距離</div>
+                <div class="step-desc">11 維摘要特徵向量（距離、方位、風速、氣壓、移速、降雨潛力等）</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">6</div>
+            <div class="step-content">
+                <div class="step-title">Combined Score</div>
+                <div class="step-desc">final = 0.6 × DTW + 0.4 × KNN → Top-K 相似颱風 → 加權投票預測</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>v2 改進重點</h3>
+        <div class="table-wrapper">
+            <table>
+                <tr><th>項目</th><th>v1</th><th>v2</th></tr>
+                <tr><td>座標轉換</td><td>dx = lon - 121</td><td>dx = (lon-121) × cos(lat)</td></tr>
+                <tr><td>Impact Window</td><td>500km</td><td>300km + 距離加權</td></tr>
+                <tr><td>DTW θ距離</td><td>歐氏距離</td><td>環形距離</td></tr>
+                <tr><td>DTW 標準化</td><td>統計標準化</td><td>物理標準化</td></tr>
+                <tr><td>DTW 限制</td><td>無</td><td>Sakoe-Chiba band 30%</td></tr>
+                <tr><td>Rain proxy</td><td>wind / distance</td><td>wind × cos(θ) / distance</td></tr>
+                <tr><td>Combined</td><td>α×KNN+(1-α)×DTW</td><td>+ Rule-Based soft filter + 同類折扣</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>11 維特徵向量</h3>
+        <div class="table-wrapper">
+            <table>
+                <tr><th>#</th><th>特徵</th><th>物理意義</th></tr>
+                <tr><td>1</td><td>min_distance_to_taiwan</td><td>最接近距離 (km)</td></tr>
+                <tr><td>2</td><td>mean_angle</td><td>通過台灣時平均方位角 (rad)</td></tr>
+                <tr><td>3</td><td>max_wind_kt</td><td>生命週期最大風速 (kt)</td></tr>
+                <tr><td>4</td><td>max_wind_in_window_kt</td><td>影響區內最大風速 (kt)</td></tr>
+                <tr><td>5</td><td>approach_speed_kmh</td><td>接近時移動速度 (km/h)</td></tr>
+                <tr><td>6</td><td>min_pressure_mb</td><td>最低氣壓 (mb)</td></tr>
+                <tr><td>7</td><td>intensification_rate</td><td>增強率 (kt/step)</td></tr>
+                <tr><td>8</td><td>rain_proxy</td><td>降雨潛力指標</td></tr>
+                <tr><td>9</td><td>is_landfall</td><td>是否登陸</td></tr>
+                <tr><td>10</td><td>birth_lon</td><td>生成經度</td></tr>
+                <tr><td>11</td><td>birth_lat</td><td>生成緯度</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Rule-Based Method -->
+<div id="tab-rulebased" class="tab-content" style="display:none;">
+    <div class="card">
+        <div class="card-header">
+            <span class="icon">📏</span>
+            <h3 id="rule-based">規則式路徑分類法 (Rule-Based Classification)</h3>
+        </div>
+        <div class="card-body">
+            <p>基於 CWA 官方侵臺路徑分類定義，透過颱風軌跡相對於台灣的幾何特徵（位置、方向、距離）進行自動分類。</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>分類定義</h3>
+        <div class="table-wrapper">
+            <table>
+                <tr><th>類型</th><th>說明</th></tr>
+                <tr><td><span class="badge badge-primary">1</span></td><td>通過台灣北部海面向西或西北西</td></tr>
+                <tr><td><span class="badge badge-primary">2</span></td><td>通過台灣北部向西或西北（含登陸北部）</td></tr>
+                <tr><td><span class="badge badge-primary">3</span></td><td>通過台灣中部向西（含登陸中部）</td></tr>
+                <tr><td><span class="badge badge-primary">4</span></td><td>通過台灣南部向西（含登陸南部）</td></tr>
+                <tr><td><span class="badge badge-primary">5</span></td><td>通過台灣南部海面向西</td></tr>
+                <tr><td><span class="badge badge-primary">6</span></td><td>沿台灣東岸或東部海面北上</td></tr>
+                <tr><td><span class="badge badge-primary">7</span></td><td>通過台灣南部海面向東或東北</td></tr>
+                <tr><td><span class="badge badge-primary">8</span></td><td>通過台灣南部海面向北或北北西</td></tr>
+                <tr><td><span class="badge badge-gray">9</span></td><td>對台灣無侵襲但有影響</td></tr>
+                <tr><td><span class="badge badge-warning">特殊</span></td><td>迴旋、U型轉向、滯留、二次穿越</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>決策流程</h3>
+        <div class="pipeline-step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+                <div class="step-title">計算距離序列</div>
+                <div class="step-desc">Haversine 球面距離 → 取雙層 window (core=200km, context=400km)</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+                <div class="step-title">方向計算</div>
+                <div class="step-desc">向量平均 heading（非單一向量），角度判斷方向（arctan2 取代固定閾值）</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+                <div class="step-title">優先判斷：類型 6</div>
+                <div class="step-desc">東側 > 50% + 北向 > 30° + 經度 std < 1° + min_dist < 150km</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+                <div class="step-title">特殊路徑檢測</div>
+                <div class="step-desc">迴旋(累積轉向>270°) / U型轉向 / 滯留(≥12點, 範圍<1.5°) / 二次穿越</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">5</div>
+            <div class="step-content">
+                <div class="step-title">無影響篩除</div>
+                <div class="step-desc">min_distance > 300km → 類型 9</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">6</div>
+            <div class="step-content">
+                <div class="step-title">登陸判斷</div>
+                <div class="step-desc">三級優先：登陸資料 > 穿越 bounding box > distance < 50km → 類型 2/3/4</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="step-num">7</div>
+            <div class="step-content">
+                <div class="step-title">海面分類</div>
+                <div class="step-desc">依 closest_lat 位置 + heading 方向 → 類型 1/5/7/8</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>v2 核心改進</h3>
+        <div class="table-wrapper">
+            <table>
+                <tr><th>項目</th><th>v1</th><th>v2</th></tr>
+                <tr><td>Impact Window</td><td>500km 單層</td><td>200km core + 400km context</td></tr>
+                <tr><td>方向計算</td><td>entry→exit 單一向量</td><td>向量平均 heading</td></tr>
+                <tr><td>方向閾值</td><td>dlon < -0.5</td><td>arctan2 角度判斷</td></tr>
+                <tr><td>位置判斷</td><td>mean_lat</td><td>closest_lat</td></tr>
+                <tr><td>優先順序</td><td>南海→北海→登陸</td><td>type6→特殊→登陸→海面</td></tr>
+                <tr><td>登陸判斷</td><td>混合來源</td><td>三級優先</td></tr>
+                <tr><td>信心分數</td><td>固定值</td><td>資料驅動</td></tr>
+                <tr><td>特殊路徑</td><td>fallback</td><td>明確定義</td></tr>
+                <tr><td>相似度</td><td>Hard filter</td><td>加權評分</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showTab(name) {
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.tabs .tab').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + name).style.display = 'block';
+    event.target.classList.add('active');
+}
+</script>
+{% endblock %}

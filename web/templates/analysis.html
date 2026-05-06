@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}資料分析 — 颱風類比預測系統{% endblock %}
 {% block content %}
-<h1>📊 資料分析</h1>
-<p style="color:#666;margin-bottom:1rem;">共 {{ images|length }} 張分析圖表（點擊可放大）</p>
+<h1 class="page-title">資料分析</h1>
+<p class="page-subtitle">探索歷史侵臺颱風的統計分析與視覺化圖表</p>
 
 {% if images %}
 <div class="grid grid-2">
@@ -14,8 +14,10 @@
     {% endfor %}
 </div>
 {% else %}
-<div class="card">
-    <p>尚無分析圖表。請先執行 <code>python scripts/run_analysis.py</code></p>
+<div class="card" style="text-align:center;padding:4rem 2rem;color:var(--text-secondary);">
+    <div style="font-size:3rem;margin-bottom:1rem;">📊</div>
+    <p>尚無分析圖表</p>
+    <p style="font-size:0.85rem;margin-top:0.5rem;">執行 <code>python scripts/run_analysis.py</code> 產生分析圖表</p>
 </div>
 {% endif %}
 {% endblock %}

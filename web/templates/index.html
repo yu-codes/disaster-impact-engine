@@ -1,108 +1,83 @@
 {% extends "base.html" %}
 {% block title %}首頁 — 颱風類比預測系統{% endblock %}
 {% block content %}
-<h1 class="page-title">颱風類比災害預測系統</h1>
-<p class="page-subtitle">基於歷史颱風軌跡與多維特徵比對，找出最相似的歷史颱風並預測侵臺路徑分類</p>
+<section class="hero">
+    <h1 class="page-title">Disaster Impact Engine</h1>
+    <p class="page-subtitle">基於歷史颱風軌跡相似度的侵臺路徑分類預測系統</p>
+</section>
 
-<!-- Stats Overview -->
-<div class="grid grid-4" style="margin-bottom: 2rem;">
-    <div class="card stat-card">
-        <div class="stat-value">207+</div>
-        <div class="stat-label">歷史颱風紀錄</div>
-    </div>
-    <div class="card stat-card">
-        <div class="stat-value">10</div>
-        <div class="stat-label">路徑分類類型</div>
-    </div>
-    <div class="card stat-card">
-        <div class="stat-value">2</div>
-        <div class="stat-label">預測方法</div>
-    </div>
-    <div class="card stat-card">
-        <div class="stat-value">1958-2025</div>
-        <div class="stat-label">資料涵蓋年份</div>
-    </div>
-</div>
-
-<!-- Feature Cards -->
-<div class="grid grid-3">
-    <div class="card">
-        <div class="card-header">
-            <span class="icon">📊</span>
-            <h3>資料分析</h3>
-        </div>
-        <div class="card-body">
-            <p>探索歷史侵臺颱風的路徑分類分布、強度統計、生成位置、特徵相關性等 EDA 圖表。</p>
-        </div>
-        <a href="/analysis" class="btn btn-primary">查看分析</a>
-    </div>
-    <div class="card">
-        <div class="card-header">
-            <span class="icon">🎯</span>
-            <h3>預測結果</h3>
-        </div>
-        <div class="card-body">
-            <p>瀏覽各版本預測實驗結果，包含 Combined、Rule-Based、KNN 等不同方法的準確率比較。</p>
-        </div>
-        <a href="/predictions" class="btn btn-primary">查看結果</a>
-    </div>
-    <div class="card">
-        <div class="card-header">
-            <span class="icon">🔮</span>
-            <h3>線上預測</h3>
-        </div>
-        <div class="card-body">
-            <p>輸入颱風路徑資料或選擇範例，即時查詢最相似歷史颱風並產出預測分析。</p>
-        </div>
-        <a href="/predict" class="btn btn-accent">開始預測</a>
-    </div>
-</div>
-
-<!-- Method Overview -->
-<div class="card" style="margin-top: 1rem;">
+<!-- Architecture Overview -->
+<div class="card" style="margin-top: 2rem;">
     <div class="card-header">
-        <span class="icon">⚙️</span>
-        <h3>系統流程概述</h3>
+        <h3>系統架構</h3>
     </div>
-    <div class="pipeline-step">
-        <div class="step-num">1</div>
-        <div class="step-content">
-            <div class="step-title">空間標準化</div>
-            <div class="step-desc">以台灣 (23.7°N, 121°E) 為原點，修正經緯度不等距問題，計算極座標 (r, θ)</div>
-        </div>
-    </div>
-    <div class="pipeline-step">
-        <div class="step-num">2</div>
-        <div class="step-content">
-            <div class="step-title">Impact Window 提取</div>
-            <div class="step-desc">取距台灣 300km 內的軌跡段落，並以 exp(-r/200) 加權</div>
-        </div>
-    </div>
-    <div class="pipeline-step">
-        <div class="step-num">3</div>
-        <div class="step-content">
-            <div class="step-title">多維相似度計算</div>
-            <div class="step-desc">DTW 路徑對齊（環形角度 + Sakoe-Chiba）+ KNN 特徵距離（11維向量）</div>
-        </div>
-    </div>
-    <div class="pipeline-step">
-        <div class="step-num">4</div>
-        <div class="step-content">
-            <div class="step-title">預測與評估</div>
-            <div class="step-desc">Combined Score 融合 + Rule-Based 同類折扣 → 加權投票預測路徑分類</div>
+    <div class="card-body">
+        <div class="architecture-diagram">
+            <div class="arch-flow">
+                <div class="arch-node data-node">
+                    <div class="arch-label">Data Layer</div>
+                    <div class="arch-detail">207 筆颱風 · 1958-2025<br>IBTrACS + CWA 路徑分類</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-node feature-node">
+                    <div class="arch-label">Feature Extraction</div>
+                    <div class="arch-detail">極座標轉換 · Impact Window<br>11 維摘要特徵 + 時序路徑</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-node sim-node">
+                    <div class="arch-label">Similarity Engine</div>
+                    <div class="arch-detail">KNN · DTW · Rule-Based<br>RRF 融合排名</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-node pred-node">
+                    <div class="arch-label">Prediction</div>
+                    <div class="arch-detail">Top-K 類比投票<br>路徑分類 1-9</div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
-<!-- Quick Links -->
-<div class="card" style="margin-top: 1rem;">
+<!-- Dataset -->
+<div class="card" style="margin-top: 1.5rem;">
     <div class="card-header">
-        <span class="icon">📖</span>
-        <h3>方法文件</h3>
+        <h3>資料集概覽</h3>
     </div>
-    <div class="grid grid-2" style="gap: 1rem;">
-        <a href="/methods#analog" class="btn btn-secondary" style="justify-content: start;">📐 類比相似度預測法 (Analog Similarity)</a>
-        <a href="/methods#rule-based" class="btn btn-secondary" style="justify-content: start;">📏 規則式路徑分類法 (Rule-Based)</a>
+    <div class="card-body">
+        <div class="grid grid-3" style="gap: 1.5rem; margin-bottom: 1.5rem;">
+            <div class="mini-stat">
+                <span class="mini-stat-value">198</span>
+                <span class="mini-stat-label">評估樣本（cat 1-9）</span>
+            </div>
+            <div class="mini-stat">
+                <span class="mini-stat-value">9</span>
+                <span class="mini-stat-label">CWA 侵臺路徑類型</span>
+            </div>
+            <div class="mini-stat">
+                <span class="mini-stat-value">67 年</span>
+                <span class="mini-stat-label">歷史跨度</span>
+            </div>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>路徑類型</th>
+                    <th>說明</th>
+                    <th>樣本數</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><span class="cat-badge">1</span></td><td>通過台灣北部海面向西移動</td><td>23</td></tr>
+                <tr><td><span class="cat-badge">2</span></td><td>通過台灣北部（含登陸）</td><td>29</td></tr>
+                <tr><td><span class="cat-badge">3</span></td><td>通過台灣中部（含登陸）</td><td>30</td></tr>
+                <tr><td><span class="cat-badge">4</span></td><td>通過台灣南部（含登陸）</td><td>21</td></tr>
+                <tr><td><span class="cat-badge">5</span></td><td>通過台灣南部海面向西移動</td><td>30</td></tr>
+                <tr><td><span class="cat-badge">6</span></td><td>沿台灣東岸或東部海面北上</td><td>30</td></tr>
+                <tr><td><span class="cat-badge">7</span></td><td>通過台灣海峽北上</td><td>11</td></tr>
+                <tr><td><span class="cat-badge">8</span></td><td>通過台灣南端海面向東北移動</td><td>6</td></tr>
+                <tr><td><span class="cat-badge">9</span></td><td>其他不規則路徑</td><td>18</td></tr>
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

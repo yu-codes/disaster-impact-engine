@@ -13,17 +13,20 @@
                 {{ run.run_id }}
             </div>
             {% if run.meta %}
+            {% set results = run.meta.results if run.meta.results is defined else run.meta %}
             <div style="display:flex;gap:1rem;flex-wrap:wrap;font-size:0.85rem;color:var(--text-secondary);">
                 {% if run.meta.method %}
                 <span>方法: <span class="badge badge-primary">{{ run.meta.method }}</span></span>
                 {% endif %}
-                {% if run.meta.accuracy is defined %}
-                <span>準確率: <strong style="color:{{ 'var(--success)' if run.meta.accuracy > 0.5 else 'var(--warning)' }}">{{ "%.1f%%"|format(run.meta.accuracy * 100) }}</strong></span>
+                {% if results.accuracy is defined %}
+                <span>準確率: <strong style="color:{{ 'var(--success)' if results.accuracy > 0.5 else 'var(--warning)' }}">{{ "%.1f%%"|format(results.accuracy * 100) }}</strong></span>
                 {% endif %}
-                {% if run.meta.total is defined %}
-                <span>{{ run.meta.correct|default(0) }}/{{ run.meta.total }} 正確</span>
+                {% if results.total is defined %}
+                <span>{{ results.correct|default(0) }}/{{ results.total }} 正確</span>
                 {% endif %}
-                {% if run.meta.k is defined %}
+                {% if run.meta.parameters is defined and run.meta.parameters.k is defined %}
+                <span>k={{ run.meta.parameters.k }}</span>
+                {% elif run.meta.k is defined %}
                 <span>k={{ run.meta.k }}</span>
                 {% endif %}
             </div>

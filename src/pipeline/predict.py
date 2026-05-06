@@ -1,7 +1,10 @@
 """
-完整預測流程
+預測管道 — 組裝模組化元件，支援 config 驅動
 
-data → features → similarity → model → evaluation → visualization
+data → features → similarity → model → evaluation
+
+每次預測由外部 config 決定方法與參數組合，
+pipeline 僅負責組裝與執行。
 """
 
 import json
@@ -21,6 +24,10 @@ from ..similarity.baseline import BaselineSimilarity
 from ..similarity.rule_based import RuleBasedSimilarity
 from ..models.analog import AnalogModel
 from ..impact.mapping import ImpactMapper
+from ..evaluation.metrics import compute_category_accuracy
+
+# 只評估有明確路徑定義的類別
+VALID_CATEGORIES = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
 
 @dataclass
@@ -40,37 +47,82 @@ class PredictionResult:
 
 class DisasterImpactPipeline:
     """
-    完整的颱風類比預測流程
+    颱風類比預測管道
+
+    可由外部 config dict 初始化，支援：
+    - method: knn / dtw / combined / rule_based / baseline
+    - 各方法的專屬參數
     """
 
-    def __init__(
-        self,
-        similarity_method: str = "combined",
-        alpha: float = 0.2,
-        feature_weights: np.ndarray | None = None,
-        dtw_weights: np.ndarray | None = None,
-        impact_radius_km: float = 500.0,
-    ):
+    def __init__(self, config: dict | None = None, **kwargs):
         """
         Args:
-            similarity_method: "knn", "dtw", "combined"
-            alpha: combined 模式下特徵距離的權重
-            feature_weights: KNN 特徵權重
-            dtw_weights: DTW 維度權重
-            impact_radius_km: impact window 半徑
+            config: 完整配置 dict（通常從 YAML 載入）
+            **kwargs: 簡易模式，相容舊 API
         """
-        self.similarity_method = similarity_method
-        self.alpha = alpha
-        self.feature_weights = feature_weights
-        self.dtw_weights = dtw_weights
-        self.impact_radius_km = impact_radius_km
+        if config:
+            self._config = config
+            params = config.get("parameters", {})
+            self.similarity_method = config["method"]
+            self.alpha = params.get("alpha", 0.2)
+            self.rule_weight = params.get("rule_weight", 0.5)
+            self.impact_radius_km = params.get("impact_radius_km", 500.0)
+            self.k = params.get("k", 5)
+            self.pool_size_factor = params.get("pool_size_factor", 10)
+            self.rrf_k = params.get("rrf_k", 60)
+            self.dtw_weights = params.get("dtw_weights")
+            self.feature_weights = params.get("feature_weights")
+            self.weight_path = params.get("weight_path", 0.4)
+            self.weight_category = params.get("weight_category", 0.5)
+            self.weight_intensity = params.get("weight_intensity", 0.1)
+            eval_cfg = config.get("evaluation", {})
+            self.valid_categories = eval_cfg.get("categories", VALID_CATEGORIES)
+            self.metrics = eval_cfg.get("metrics", ["category_accuracy"])
+        else:
+            # Legacy kwargs mode
+            self.similarity_method = kwargs.get("similarity_method", "combined")
+            self.alpha = kwargs.get("alpha", 0.2)
+            self.rule_weight = kwargs.get("rule_weight", 0.5)
+            self.impact_radius_km = kwargs.get("impact_radius_km", 500.0)
+            self.k = kwargs.get("k", 5)
+            self.pool_size_factor = kwargs.get("pool_size_factor", 10)
+            self.rrf_k = kwargs.get("rrf_k", 60)
+            self.dtw_weights = kwargs.get("dtw_weights")
+            self.feature_weights = kwargs.get("feature_weights")
+            self.weight_path = kwargs.get("weight_path", 0.4)
+            self.weight_category = kwargs.get("weight_category", 0.5)
+            self.weight_intensity = kwargs.get("weight_intensity", 0.1)
+            self.valid_categories = VALID_CATEGORIES
+            self.metrics = ["category_accuracy"]
+            self._config = self._build_config()
 
         self.loader: DataLoader | None = None
-        self.extractor = TyphoonFeatureExtractor(impact_radius_km=impact_radius_km)
+        self.extractor = TyphoonFeatureExtractor(impact_radius_km=self.impact_radius_km)
         self.similarity: SimilarityBase | None = None
         self.model: AnalogModel | None = None
         self.features: dict[str, TyphoonFeatures] = {}
         self.label_dict: dict[str, str] = {}
+
+    def _build_config(self) -> dict:
+        """從屬性建構 config dict"""
+        return {
+            "method": self.similarity_method,
+            "parameters": {
+                "alpha": self.alpha,
+                "k": self.k,
+                "impact_radius_km": self.impact_radius_km,
+                "pool_size_factor": self.pool_size_factor,
+                "rrf_k": self.rrf_k,
+            },
+            "evaluation": {
+                "metrics": self.metrics,
+                "categories": self.valid_categories,
+            },
+        }
+
+    def get_config(self) -> dict:
+        """取得完整配置（用於記錄）"""
+        return self._config
 
     def initialize(self, processed_dir: str = "data/processed"):
         """載入資料並建立模型"""
@@ -92,48 +144,98 @@ class DisasterImpactPipeline:
 
         # 4. 建立相似度模型
         print("\n📐 建立相似度模型...")
-        if self.similarity_method == "knn":
-            self.similarity = KNNSimilarity(feature_weights=self.feature_weights)
-        elif self.similarity_method == "dtw":
-            self.similarity = DTWSimilarity(dtw_weights=self.dtw_weights)
-        elif self.similarity_method == "combined":
-            self.similarity = CombinedSimilarity(
-                alpha=self.alpha,
-                feature_weights=self.feature_weights,
-                dtw_weights=self.dtw_weights,
-            )
-        elif self.similarity_method == "baseline":
-            self.similarity = BaselineSimilarity(seed=42)
-        elif self.similarity_method == "rule_based":
-            self.similarity = RuleBasedSimilarity()
-        else:
-            raise ValueError(f"不支援的相似度方法：{self.similarity_method}")
-
-        if self.similarity_method in ("rule_based", "combined"):
-            self.similarity.fit(self.features, loader=self.loader)
-        else:
-            self.similarity.fit(self.features)
+        self.similarity = self._create_similarity()
+        self._fit_similarity()
 
         # 5. 建立預測模型
         self.model = AnalogModel(label_dict=self.label_dict)
 
         print(f"\n✅ 系統初始化完成（方法={self.similarity_method}）")
 
-    def predict(self, query_id: str, k: int = 5) -> PredictionResult:
+    def _create_similarity(self) -> SimilarityBase:
+        """根據配置建立相似度計算器"""
+        method = self.similarity_method
+        if method == "knn":
+            return KNNSimilarity(feature_weights=self.feature_weights)
+        elif method == "dtw":
+            return DTWSimilarity(
+                dtw_weights=(np.array(self.dtw_weights) if self.dtw_weights else None)
+            )
+        elif method == "combined":
+            return CombinedSimilarity(
+                alpha=self.alpha,
+                rule_weight=self.rule_weight,
+                feature_weights=self.feature_weights,
+                dtw_weights=(np.array(self.dtw_weights) if self.dtw_weights else None),
+                pool_size_factor=self.pool_size_factor,
+                rrf_k=self.rrf_k,
+            )
+        elif method == "rule_based":
+            return RuleBasedSimilarity(
+                weight_path=self.weight_path,
+                weight_category=self.weight_category,
+                weight_intensity=self.weight_intensity,
+            )
+        elif method == "baseline":
+            return BaselineSimilarity(seed=42)
+        else:
+            raise ValueError(f"不支援的方法：{method}")
+
+    def _fit_similarity(self):
+        """擬合相似度模型"""
+        if self.similarity_method in ("rule_based", "combined"):
+            self.similarity.fit(self.features, loader=self.loader)
+        else:
+            self.similarity.fit(self.features)
+
+    def predict(self, query_id: str, k: int | None = None) -> PredictionResult:
         """對單一颱風做預測"""
+        if k is None:
+            k = self.k
         rec = self.loader.get(query_id)
 
-        # 找相似颱風
+        # Rule-based: 直接使用規則分類結果（不需要投票）
+        if self.similarity_method == "rule_based":
+            from ..similarity.rule_based import classify_typhoon_by_rules
+
+            rule_result = classify_typhoon_by_rules(rec.track, rec.landfall_location)
+            predicted_cat = rule_result["predicted_category"]
+            conf = rule_result["confidence"]
+            # Still get similar typhoons for reference
+            sim_result = self.similarity.find_similar(query_id, k=k)
+            similar_info = []
+            for tid, dist in zip(sim_result.similar_ids, sim_result.distances):
+                analog_rec = self.loader.get(tid)
+                similar_info.append(
+                    {
+                        "typhoon_id": tid,
+                        "name_zh": analog_rec.name_zh,
+                        "name_en": analog_rec.name_en,
+                        "year": analog_rec.year,
+                        "category": analog_rec.taiwan_track_category,
+                        "distance": round(dist, 4),
+                    }
+                )
+            return PredictionResult(
+                typhoon_id=query_id,
+                name_zh=rec.name_zh,
+                name_en=rec.name_en,
+                true_category=rec.taiwan_track_category,
+                predicted_category=predicted_cat,
+                confidence=conf,
+                is_correct=(predicted_cat == rec.taiwan_track_category),
+                similar_typhoons=similar_info,
+                category_votes={predicted_cat: 1.0},
+            )
+
         sim_result = self.similarity.find_similar(query_id, k=k)
 
-        # 預測
         pred = self.model.predict(
             query_id=query_id,
             similar_ids=sim_result.similar_ids,
             distances=sim_result.distances,
         )
 
-        # 組裝相似颱風資訊
         similar_info = []
         for analog in pred.get("analogs", []):
             tid = analog["typhoon_id"]
@@ -161,83 +263,64 @@ class DisasterImpactPipeline:
             category_votes=pred.get("category_votes", {}),
         )
 
-    def evaluate(self, k: int = 5, verbose: bool = True) -> dict[str, Any]:
+    def evaluate(self, k: int | None = None, verbose: bool = True) -> dict[str, Any]:
         """
-        Leave-one-out 評估
+        Leave-one-out 評估（只評估 valid_categories 內的類別）
+        """
+        if k is None:
+            k = self.k
 
-        Returns:
-            {
-                "accuracy": float,
-                "total": int,
-                "correct": int,
-                "per_category": {cat: {total, correct, accuracy}},
-                "predictions": [PredictionResult],
-                "confusion_data": {(true, pred): count},
-            }
-        """
         all_ids = self.loader.get_all_ids()
         results: list[PredictionResult] = []
-        correct = 0
-        total = 0
-
-        per_category: dict[str, dict] = {}
-        confusion: dict[tuple, int] = {}
+        predictions_for_metrics: list[dict] = []
 
         for tid in all_ids:
+            rec = self.loader.get(tid)
+            # 只評估 valid categories
+            if rec.taiwan_track_category not in self.valid_categories:
+                continue
+
             result = self.predict(tid, k=k)
             results.append(result)
-
-            if result.true_category and result.predicted_category:
-                total += 1
-                true_cat = result.true_category
-                pred_cat = result.predicted_category
-
-                if result.is_correct:
-                    correct += 1
-
-                # 每類統計
-                if true_cat not in per_category:
-                    per_category[true_cat] = {"total": 0, "correct": 0}
-                per_category[true_cat]["total"] += 1
-                if result.is_correct:
-                    per_category[true_cat]["correct"] += 1
-
-                # 混淆矩陣
-                key = (true_cat, pred_cat)
-                confusion[key] = confusion.get(key, 0) + 1
-
-        accuracy = correct / total if total > 0 else 0.0
-
-        # 每類正確率
-        for cat_info in per_category.values():
-            cat_info["accuracy"] = (
-                cat_info["correct"] / cat_info["total"]
-                if cat_info["total"] > 0
-                else 0.0
+            predictions_for_metrics.append(
+                {
+                    "typhoon_id": result.typhoon_id,
+                    "true_category": result.true_category,
+                    "predicted_category": result.predicted_category,
+                }
             )
+
+        # 計算指標
+        eval_result = compute_category_accuracy(
+            predictions_for_metrics, self.valid_categories
+        )
 
         if verbose:
             print(f"\n{'='*60}")
             print(f"📊 評估結果（k={k}, method={self.similarity_method}）")
             print(f"{'='*60}")
-            print(f"  總準確率：{accuracy:.1%} ({correct}/{total})")
+            print(
+                f"  總準確率：{eval_result.overall_score:.1%}"
+                f" ({eval_result.correct}/{eval_result.total})"
+            )
             print(f"\n  各類準確率：")
-            for cat in sorted(per_category.keys()):
-                info = per_category[cat]
+            for cat in sorted(eval_result.per_category.keys()):
+                info = eval_result.per_category[cat]
                 print(
-                    f"    類型 {cat}: {info['accuracy']:.1%} ({info['correct']}/{info['total']})"
+                    f"    類型 {cat}: {info['accuracy']:.1%}"
+                    f" ({info['correct']}/{info['total']})"
                 )
 
         return {
-            "accuracy": accuracy,
-            "total": total,
-            "correct": correct,
-            "per_category": per_category,
+            "accuracy": eval_result.overall_score,
+            "total": eval_result.total,
+            "correct": eval_result.correct,
+            "per_category": eval_result.per_category,
             "predictions": results,
-            "confusion_data": confusion,
+            "confusion_data": eval_result.confusion_data,
         }
 
-    def save_results(self, eval_result: dict, output_dir: str = "outputs/predictions"):
+    def save_results(self, eval_result: dict, output_dir: str):
         """儲存評估結果"""
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -267,7 +350,6 @@ class DisasterImpactPipeline:
         # 摘要
         summary = {
             "method": self.similarity_method,
-            "alpha": self.alpha,
             "accuracy": round(eval_result["accuracy"], 4),
             "total": eval_result["total"],
             "correct": eval_result["correct"],
@@ -275,5 +357,9 @@ class DisasterImpactPipeline:
         }
         with open(out / "evaluation_summary.json", "w", encoding="utf-8") as f:
             json.dump(summary, f, ensure_ascii=False, indent=2)
+
+        # 配置檔（關鍵：每次結果可追溯到配置）
+        with open(out / "config.json", "w", encoding="utf-8") as f:
+            json.dump(self._config, f, ensure_ascii=False, indent=2)
 
         print(f"✓ 結果已儲存至 {out}/")

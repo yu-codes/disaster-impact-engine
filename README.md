@@ -71,52 +71,107 @@ EDA 分析 + 視覺化
 Web 前端展示 + 線上預測 API
 ```
 
-## 兩種預測方法
+## 侵臺颱風路徑分類（CWA 定義）
 
-### 方法一：類比相似度預測法 (Analog Similarity Method)
+中央氣象署將侵臺颱風路徑分為 9 類：
 
-結合 DTW 路徑對齊 + KNN 特徵距離 + Rule-Based 前置分類的混合方法。
+| 分類 | 描述 | 資料筆數 |
+|------|------|---------|
+| 1 | 通過台灣北部海面向西或西北西進行者 | 23 |
+| 2 | 通過台灣北部向西或西北進行者（含登陸北部） | 29 |
+| 3 | 通過台灣中部向西進行者（含登陸中部） | 30 |
+| 4 | 通過台灣南部向西進行者（含登陸南部） | 21 |
+| 5 | 通過台灣南部海面向西進行者 | 30 |
+| 6 | 沿台灣東岸或東部海面北上者 | 30 |
+| 7 | 通過台灣南部海面向東或東北進行者 | 11 |
+| 8 | 通過台灣南部海面向北或北北西進行者 | 6 |
+| 9 | 特殊路徑或對台灣有影響但無侵襲者 | 18 |
 
-**核心流程：**
-1. 空間標準化（修正座標 + 極座標）
-2. Impact Window 提取（r < 300km）
-3. DTW 路徑相似度（環形θ + Sakoe-Chiba）
-4. KNN 特徵距離（11維向量）
-5. Combined Score（0.6×DTW + 0.4×KNN + 同類折扣）
+> 評估時僅使用分類 1-9（共 198 筆），排除「特殊」標記的 9 筆。
 
-詳見 [`docs/analog_similarity_method.md`](docs/analog_similarity_method.md)
+## 兩種預測方法（獨立運作）
 
-### 方法二：規則式路徑分類法 (Rule-Based Classification)
+### Combined RRF（KNN + DTW + Rule-Based 排名融合）
 
-基於 CWA 官方分類定義，透過幾何特徵自動判斷路徑類型。
+結合 KNN 特徵距離與 DTW 時序路徑對齊，使用 Reciprocal Rank Fusion 融合排名。
 
-**核心流程：**
-1. 雙層 Impact Window（core=200km, context=400km）
-2. 向量平均方向計算
-3. 登陸判斷（data > bbox > distance 三級優先）
-4. 優先順序分類（type6 → 特殊 → 無影響 → 登陸 → 海面）
+**Pipeline：** 極座標轉換 → Impact Window (500km) → KNN 排名 + DTW 排名 + Rule 排名 → RRF 融合 → Top-K 投票
 
-詳見 [`docs/rule_based_method.md`](docs/rule_based_method.md)
+**核心參數：** α=0.13, rule_weight=0.25, rrf_k=60, pool_size_factor=10, Sakoe-Chiba 30%
+
+**準確率：** 71.7%（198 筆 LOO，類別 1-9）
+
+### Rule-Based Classification（幾何規則分類）
+
+基於 CWA 官方路徑分類定義，透過軌跡幾何特徵（接近方向、穿越判斷、登陸地點）直接判定路徑類型。
+
+**Pipeline：** Haversine 距離 → 最近點 → 接近方向 → 穿越判斷 → 登陸解析 → 規則分類
+
+**準確率：** 74.2%（198 筆 LOO，類別 1-9）
 
 ## 使用方式
+
+### 新增預測配置流程
+
+1. 在 `configs/experiments/` 建立新的 YAML 配置檔
+2. 在 `pipelines/` 建立對應的 pipeline 腳本（或使用通用 runner）
+3. 執行預測
+
+```bash
+# 方法一：使用獨立 pipeline 腳本
+python pipelines/combined_rrf.py
+python pipelines/rule_based.py
+
+# 方法二：使用通用 runner + 指定配置檔
+python scripts/run_prediction.py --config configs/experiments/combined_rrf.yaml
+python scripts/run_prediction.py --config configs/experiments/rule_based.yaml
+
+# 方法三：傳統參數模式（向下相容）
+python scripts/run_prediction.py --method combined --alpha 0.13 --k 5
+python scripts/run_prediction.py --method rule_based --k 5
+```
+
+### 新增預設配置流程
+
+1. 複製現有配置為模板：
+   ```bash
+   cp configs/experiments/combined_rrf.yaml configs/experiments/my_experiment.yaml
+   ```
+
+2. 編輯配置參數：
+   ```yaml
+   name: "my_experiment"
+   method: "combined"
+   parameters:
+     alpha: 0.15
+     rule_weight: 0.3
+     k: 7
+     ...
+   ```
+
+3. 建立對應 pipeline（可選）：
+   ```bash
+   cp pipelines/combined_rrf.py pipelines/my_experiment.py
+   # 修改 DEFAULT_CONFIG 路徑
+   ```
+
+4. 執行預測：
+   ```bash
+   python scripts/run_prediction.py --config configs/experiments/my_experiment.yaml
+   ```
+
+5. 結果自動存至 `outputs/predictions/{timestamp}_{name}/`
 
 ### 預測指令
 
 ```bash
-# Combined 方法（最佳）
-python scripts/run_prediction.py --method combined --alpha 0.4 --k 5
+# 使用 YAML 設定檔（推薦）
+python scripts/run_prediction.py --config configs/experiments/combined_rrf.yaml
+python scripts/run_prediction.py --config configs/experiments/rule_based.yaml
 
-# Rule-Based 方法
+# 傳統參數模式（向下相容）
+python scripts/run_prediction.py --method combined --alpha 0.2 --k 5
 python scripts/run_prediction.py --method rule_based --k 5
-
-# KNN 方法
-python scripts/run_prediction.py --method knn --k 5
-
-# DTW 方法
-python scripts/run_prediction.py --method dtw --k 5
-
-# 預測單一颱風
-python scripts/run_prediction.py --typhoon-id 202411 --method combined
 ```
 
 ### API 使用
@@ -145,24 +200,33 @@ curl -X POST http://localhost:5000/api/predict \
 disaster-impact-engine/
 ├── src/
 │   ├── data/loader.py              # 資料載入（JSON → TyphoonRecord）
-│   ├── features/typhoon.py         # 特徵工程 v2（修正座標 + 300km window）
+│   ├── features/typhoon.py         # 特徵工程（極座標 + Impact Window）
 │   ├── similarity/
 │   │   ├── base.py                 # 抽象介面
 │   │   ├── knn.py                  # KNN（標準化歐氏距離）
-│   │   ├── dtw.py                  # DTW v2（環形距離 + 物理標準化 + Sakoe-Chiba）
-│   │   ├── combined.py             # Combined v2（Rule-Based filter + DTW + KNN）
-│   │   ├── rule_based.py           # 規則式分類 v2（雙層window + 向量平均）
+│   │   ├── dtw.py                  # DTW（環形距離 + Sakoe-Chiba）
+│   │   ├── combined.py             # Combined RRF（KNN + DTW + Rule 排名融合）
+│   │   ├── rule_based.py           # 幾何規則分類（CWA 定義）
 │   │   └── baseline.py             # 隨機基線（對照組）
 │   ├── models/analog.py            # 加權投票預測
 │   ├── impact/mapping.py           # 路徑分類說明對照
 │   ├── analysis/eda.py             # 資料探索性分析
 │   ├── visualization/plots.py      # 所有圖表
-│   └── pipeline/predict.py         # 完整 pipeline + LOO 評估
+│   └── pipeline/predict.py         # Config-driven pipeline + LOO 評估
+├── pipelines/                      # 獨立預測 pipeline 腳本
+│   ├── combined_rrf.py             # Combined RRF 執行入口
+│   └── rule_based.py              # Rule-Based 執行入口
 ├── scripts/
 │   ├── build_dataset.py            # xlsx + IBTrACS → JSON
 │   ├── run_analysis.py             # EDA + 視覺化
-│   ├── run_prediction.py           # 預測 + 評估
+│   ├── run_prediction.py           # 通用預測 runner（指定 config）
 │   └── run_all_predictions.py      # 批量執行多組預測
+├── configs/experiments/            # YAML 實驗設定檔
+│   ├── combined_rrf.yaml
+│   └── rule_based.yaml
+├── docs/                           # 方法詳細文件
+│   ├── combined_rrf.md             # Combined RRF 方法文件（含 Mermaid）
+│   └── rule_based_classification.md # Rule-Based 方法文件（含 Mermaid）
 ├── web/
 │   ├── app.py                      # Flask Web 應用
 │   ├── templates/                  # HTML 模板
@@ -173,9 +237,6 @@ disaster-impact-engine/
 ├── outputs/
 │   ├── analysis/                   # EDA 圖表
 │   └── predictions/                # 預測結果（按版本）
-├── docs/
-│   ├── analog_similarity_method.md # 類比相似度預測法文件
-│   └── rule_based_method.md        # 規則式分類法文件
 ├── requirements.txt
 └── pyproject.toml
 ```
@@ -229,17 +290,9 @@ python scripts/run_prediction.py --method combined --k 5
 
 ## 技術細節
 
-### v2 改進摘要
+### 設計原則
 
-| 項目 | v1 | v2 |
-|------|-----|-----|
-| 座標轉換 | dx = lon - 121 | dx = (lon-121) × cos(lat) |
-| Impact Window | 500km | 300km + 距離加權 |
-| DTW θ距離 | 歐氏距離 | 環形距離 min(\|Δθ\|, 2π-\|Δθ\|) |
-| DTW 標準化 | 統計標準化 | 物理標準化 (r/300, θ/π, wind/100) |
-| DTW 限制 | 無 | Sakoe-Chiba band (30%) |
-| Rain proxy | wind / distance | wind × cos(θ-θ_normal) / distance |
-| 規則方向 | dlon < -0.5 | arctan2 角度判斷 |
-| 規則 window | 500km 單層 | 200km core + 400km context |
-| 規則位置 | mean_lat | closest_lat |
-| Combined | α×KNN + (1-α)×DTW | + Rule-Based soft filter + 同類折扣 |
+- **Config-Driven**：每次實驗由 YAML 設定檔驅動，結果資料夾內含完整 config 供重現
+- **方法獨立**：Combined RRF 與 Rule-Based 完全解耦，各自獨立運作
+- **評估彈性**：`src/evaluation/metrics.py` 提供 METRIC_REGISTRY，可擴充降水 loss 等指標
+- **類別 1-9**：評估排除「特殊」分類（9 筆），僅對 198 筆明確路徑颱風做 LOO

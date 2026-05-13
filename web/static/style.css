@@ -76,6 +76,38 @@ body {
     color: white;
 }
 
+/* Nav dropdown */
+.nav-dropdown {
+    position: relative;
+}
+.nav-dropdown-content {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: var(--surface);
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+    min-width: 200px;
+    z-index: 200;
+    padding: 0.5rem 0;
+    margin-top: 0.25rem;
+}
+.nav-dropdown:hover .nav-dropdown-content {
+    display: block;
+}
+.nav-dropdown-content a {
+    display: block;
+    padding: 0.5rem 1rem;
+    color: var(--text) !important;
+    font-size: 0.85rem !important;
+    border-radius: 0 !important;
+}
+.nav-dropdown-content a:hover {
+    background: var(--primary-light) !important;
+    color: var(--primary) !important;
+}
+
 /* Layout */
 .container {
     max-width: 1400px;

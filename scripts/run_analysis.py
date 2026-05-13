@@ -7,10 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.data.loader import DataLoader
-from src.features.typhoon import TyphoonFeatureExtractor
-from src.analysis.eda import TyphoonEDA
-from src.visualization.plots import TyphoonVisualizer
+from src.data.typhoon.loader import DataLoader
+from src.features.typhoon.extractor import TyphoonFeatureExtractor
+from src.analysis.typhoon.eda import TyphoonEDA
+from src.analysis.typhoon.rainfall import RainfallAnalyzer
+from src.visualization.typhoon.plots import TyphoonVisualizer
 
 
 def main():
@@ -31,11 +32,17 @@ def main():
     extractor = TyphoonFeatureExtractor()
     features = extractor.extract_all(loader)
 
-    # 視覺化
-    viz = TyphoonVisualizer("outputs/analysis")
+    # 視覺化 — 路徑分析圖
+    viz = TyphoonVisualizer("experiments/analysis")
     viz.generate_all_analysis_plots(loader, features)
 
-    print("\n✅ EDA 分析完成！圖表已儲存至 outputs/analysis/")
+    # 視覺化 — 降水 EDA 圖
+    print("\n🌧️ 載入降水資料...")
+    rainfall = RainfallAnalyzer()
+    rainfall.load()
+    viz.generate_all_rainfall_eda_plots(rainfall._records, loader, features)
+
+    print("\n✅ EDA 分析完成！圖表已儲存至 experiments/analysis/")
 
 
 if __name__ == "__main__":

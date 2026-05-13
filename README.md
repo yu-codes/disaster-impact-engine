@@ -1,6 +1,6 @@
-# 🌀 Disaster Impact Engine — 颱風類比災害預測系統
+# 🌀 Disaster Impact Engine — 多災害類比預測系統
 
-基於**歷史類比方法**，透過颱風軌跡特徵和 DTW 路徑比對，找出最相似的歷史颱風並預測侵臺路徑分類。
+基於**歷史類比方法**的多災害影響分析平台。目前支援颱風路徑分類預測與降水分析，架構設計可擴展至其他災害類型。
 
 ## 快速開始
 
@@ -35,9 +35,9 @@ python web/app.py
 ```
 
 Web 介面提供：
-- **首頁**：系統概述與方法說明
-- **資料分析**：歷史颱風 EDA 圖表
-- **預測結果**：各版本預測實驗結果
+- **首頁**：系統概述、多災害模組切換
+- **資料分析**：颱風路徑分析 + 降水分析（分頁切換）
+- **預測結果**：各版本實驗結果（含降水機率分布）
 - **線上預測**：輸入颱風路徑即時預測
 
 ### 完整工作流程
@@ -49,7 +49,11 @@ python scripts/build_dataset.py
 # 2. 探索性分析（統計 + 視覺化）
 python scripts/run_analysis.py
 
-# 3. 執行預測（多種方法）
+# 3. 執行實驗（推薦方式）
+python experiments/exp001_combined_rrf.py
+python experiments/exp002_rule_based.py
+
+# 或使用通用 runner
 python scripts/run_prediction.py --method combined --k 5
 python scripts/run_prediction.py --method rule_based --k 5
 
@@ -99,7 +103,7 @@ Web 前端展示 + 線上預測 API
 
 **核心參數：** α=0.13, rule_weight=0.25, rrf_k=60, pool_size_factor=10, Sakoe-Chiba 30%
 
-**準確率：** 71.7%（198 筆 LOO，類別 1-9）
+**準確率：** 72.2%（198 筆 LOO，類別 1-9）
 
 ### Rule-Based Classification（幾何規則分類）
 
@@ -107,7 +111,15 @@ Web 前端展示 + 線上預測 API
 
 **Pipeline：** Haversine 距離 → 最近點 → 接近方向 → 穿越判斷 → 登陸解析 → 規則分類
 
-**準確率：** 74.2%（198 筆 LOO，類別 1-9）
+**準確率：** 75.8%（198 筆 LOO，類別 1-9）
+
+### 降水分析模組
+
+基於類比結果分析臺南、高雄兩站的事件降水量，生成降水機率分布與損失指標。
+
+- **資料**：440 筆颱風事件降水記錄，207 筆與颱風索引配對
+- **指標**：MAE、RMSE（實際降水 vs 類比降水均值）
+- **輸出**：散佈圖、箱型圖、誤差分布圖、分類別降水統計
 
 ## 使用方式
 
@@ -208,11 +220,18 @@ disaster-impact-engine/
 │   │   ├── combined.py             # Combined RRF（KNN + DTW + Rule 排名融合）
 │   │   ├── rule_based.py           # 幾何規則分類（CWA 定義）
 │   │   └── baseline.py             # 隨機基線（對照組）
+│   ├── hazards/                    # 多災害模組（可擴展）
+│   │   └── typhoon/
+│   │       ├── __init__.py         # 颱風模組匯出
+│   │       └── rainfall.py         # 降水分析（MAE/RMSE + 機率分布）
 │   ├── models/analog.py            # 加權投票預測
 │   ├── impact/mapping.py           # 路徑分類說明對照
 │   ├── analysis/eda.py             # 資料探索性分析
 │   ├── visualization/plots.py      # 所有圖表
 │   └── pipeline/predict.py         # Config-driven pipeline + LOO 評估
+├── experiments/                    # 可重現實驗腳本
+│   ├── exp001_combined_rrf.py      # Combined RRF + 降水分析
+│   └── exp002_rule_based.py        # Rule-Based + 降水分析
 ├── pipelines/                      # 獨立預測 pipeline 腳本
 │   ├── combined_rrf.py             # Combined RRF 執行入口
 │   └── rule_based.py              # Rule-Based 執行入口
@@ -287,6 +306,7 @@ python scripts/run_prediction.py --method combined --k 5
 - **中央氣象署颱風資料庫**：颱風總覽（1958-2025）
 - **IBTrACS**：6 小時間距路徑強度資料
 - **侵臺路徑分類**：CWA 官方 1–9 類 + 特殊
+- **颱風事件雨量**：臺南、高雄兩站事件降水量（440 筆）
 
 ## 技術細節
 

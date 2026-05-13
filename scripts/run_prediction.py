@@ -23,8 +23,8 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yaml
-from src.pipeline.predict import DisasterImpactPipeline
-from src.visualization.plots import TyphoonVisualizer
+from src.pipeline.typhoon.predict import DisasterImpactPipeline
+from src.visualization.typhoon.plots import TyphoonVisualizer
 
 
 def load_config(config_path: str) -> dict:
